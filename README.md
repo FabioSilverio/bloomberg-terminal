@@ -43,10 +43,51 @@ See:
 
 ```bash
 cp .env.example .env
-docker compose up --build
+docker compose up --build -d
 ```
 
 Open: `http://localhost`
+
+Backend now auto-runs `alembic upgrade head` on startup (with retries), then starts API.
+
+Useful checks:
+
+```bash
+docker compose logs -f backend
+curl http://localhost/api/v1/health
+curl http://localhost/api/v1/health/ready
+```
+
+---
+
+## Modo fácil (PT-BR) 🚀
+
+Se você só quer abrir e usar, sem complicar:
+
+```bash
+cp .env.example .env
+docker compose up --build -d
+```
+
+Depois:
+
+```bash
+# App principal
+start http://localhost
+
+# Saúde geral
+curl http://localhost/api/v1/health
+
+# Pronto para uso (DB + migrações)
+curl http://localhost/api/v1/health/ready
+```
+
+Fluxo simples de uso:
+
+- Abra **WL** (watchlist)
+- Use **Quick add**: `USD/BRL`, `EUR/BRL`, `^BVSP`, `^GSPC`, `BTCUSD`
+- Clique no símbolo para abrir **INTRA**
+- Também aceita entrada manual: `USD/BRL`, `USDBRL`, `BRLUSD`, `AAPL`, `BTC-USD`
 
 ---
 
@@ -75,9 +116,9 @@ npm run dev
 
 - `MMAP` → open Market Overview panel
 - `MMAP REFRESH <seconds|ms>` → set MMAP UI refresh interval (example: `MMAP REFRESH 2`, `MMAP REFRESH 1500MS`)
-- `INTRA <SYMBOL>` or `EQRT <SYMBOL>` → open intraday realtime panel for symbol (example: `INTRA AAPL`, `EQRT EURUSD`)
+- `INTRA <SYMBOL>` or `EQRT <SYMBOL>` → open intraday realtime panel (examples: `INTRA USD/BRL`, `INTRA BRLUSD`, `EQRT AAPL`)
 - `WL` → open watchlist panel
-- `WL ADD <SYMBOL>` → persist symbol in watchlist
+- `WL ADD <SYMBOL>` → persist symbol in watchlist (examples: `WL ADD USD/BRL`, `WL ADD ^BVSP`, `WL ADD BTCUSD`)
 - `WL RM <SYMBOL>` → remove symbol from watchlist
 - `ALRT` → open alerts manager panel
 - `ALRT ADD <SYMBOL> <CONDITION> <VALUE>` → create alert (examples: `ALRT ADD AAPL ABOVE 210`, `ALRT ADD EURUSD XBELOW 1.08`, `ALRT ADD AAPL PCTUP 2`)
@@ -106,6 +147,8 @@ MMAP and INTRA refresh every 2 seconds by default, but backend protection preven
 - **Stale/LKG fallbacks** when upstream providers fail
 
 Result: frequent terminal updates without unsafe upstream burst traffic.
+
+INTRA chart rendering follows TradingView Lightweight Charts usage patterns (single chart instance + guarded incremental updates + deduped timestamps) for stability.
 
 ---
 
@@ -136,6 +179,7 @@ Result: frequent terminal updates without unsafe upstream burst traffic.
 
 ### Health
 - `GET /api/v1/health`
+- `GET /api/v1/health/ready` (readiness: DB + migration tables + alembic version)
 - `GET /api/v1/health/providers`
 
 ---
@@ -147,6 +191,7 @@ Frontend:
 - `NEXT_PUBLIC_INTRADAY_REFRESH_INTERVAL_MS` (default `2000`)
 - `NEXT_PUBLIC_WATCHLIST_REFRESH_INTERVAL_MS` (default `2000`)
 - `NEXT_PUBLIC_ALERTS_POLL_INTERVAL_MS` (default `2000`)
+- `NEXT_PUBLIC_API_TIMEOUT_MS` (default `10000`) — prevents UI hanging on pending requests
 - `NEXT_PUBLIC_INTRADAY_WS_BASE_URL` (optional override)
 
 Backend:
