@@ -50,22 +50,38 @@ class FakeRealtime:
 class FakeAlertService:
     def __init__(self, enabled: bool = True) -> None:
         self.enabled = enabled
+        self.evaluated_symbols: list[str] = []
 
-    async def get_alert_map_for_items(self, _db, item_ids: list[int]):
+    async def evaluate_snapshot(self, _db, *, symbol: str, **_kwargs):
+        self.evaluated_symbols.append(symbol)
+        return []
+
+    async def list_alerts_for_symbols_map(self, _db, symbols: list[str]):
         if not self.enabled:
             return {}
 
         now = datetime.now(timezone.utc)
-        return {
-            item_id: SimpleNamespace(
-                id=item_id + 100,
-                enabled=True,
-                direction='above',
-                target_price=130.0,
-                updated_at=now,
-            )
-            for item_id in item_ids
-        }
+        payload = {}
+        for index, symbol in enumerate(symbols, start=1):
+            payload[symbol] = [
+                SimpleNamespace(
+                    id=100 + index,
+                    enabled=True,
+                    source='watchlist',
+                    condition='price_above',
+                    threshold=130.0,
+                    one_shot=False,
+                    cooldown_seconds=60,
+                    last_triggered_at=now,
+                    last_trigger_source='watchlist:test-feed',
+                    updated_at=now,
+                    last_condition_state=True,
+                )
+            ]
+        return payload
+
+    def compute_trigger_state(self, _alert, now):
+        return 'triggered', True, False
 
 
 class FakeDb:
@@ -119,10 +135,11 @@ async def test_add_symbol_creates_watchlist_item_with_position() -> None:
 
 @pytest.mark.asyncio
 async def test_get_snapshot_maps_quotes_for_each_item(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_alerts = FakeAlertService()
     service = WatchlistService(
         settings=build_settings(),
         realtime_market=FakeRealtime(),
-        price_alerts=FakeAlertService(),
+        price_alerts=fake_alerts,
     )
 
     items = [
@@ -155,5 +172,6 @@ async def test_get_snapshot_maps_quotes_for_each_item(monkeypatch: pytest.Monkey
     assert snapshot.items[0].quote is not None
     assert snapshot.items[0].quote.source == 'test-feed'
     assert snapshot.items[1].display_symbol == 'EUR/USD'
-    assert snapshot.items[0].alert is not None
-    assert snapshot.items[0].alert.target_price == pytest.approx(130.0)
+    assert snapshot.items[0].alerts
+    assert snapshot.items[0].alerts[0].threshold == pytest.approx(130.0)
+    assert set(fake_alerts.evaluated_symbols) == {'AAPL', 'EURUSD'}

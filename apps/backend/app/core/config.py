@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     intraday_rate_limit_per_minute: int = 40
     watchlist_max_items: int = 40
 
+    alerts_default_cooldown_seconds: int = 60
+    alerts_trigger_display_seconds: int = 120
+
     alpha_vantage_api_key: str | None = None
     finnhub_api_key: str | None = None
     polygon_api_key: str | None = None

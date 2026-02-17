@@ -24,7 +24,10 @@ class ServiceContainer:
             cache=self.cache,
             http_client=self.http_client,
         )
-        self.price_alerts = PriceAlertService()
+        self.price_alerts = PriceAlertService(
+            settings=self.settings,
+            realtime_market=self.realtime_market,
+        )
         self.watchlist = WatchlistService(
             settings=self.settings,
             realtime_market=self.realtime_market,

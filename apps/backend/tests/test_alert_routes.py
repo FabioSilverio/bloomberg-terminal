@@ -16,32 +16,118 @@ from app.api.routes import alerts as alert_routes
 class FakeAlertService:
     def __init__(self) -> None:
         self.store: dict[int, SimpleNamespace] = {}
+        self.next_id = 200
+        self.events = [
+            SimpleNamespace(
+                id=1,
+                alert_id=777,
+                symbol='AAPL',
+                condition='price_above',
+                threshold=200.0,
+                trigger_price=201.5,
+                trigger_value=2.4,
+                source='watchlist:Yahoo',
+                triggered_at=datetime.now(timezone.utc),
+            )
+        ]
 
-    async def list_alerts(self, _db):
-        return list(self.store.values())
+    async def list_alerts(self, _db, *, symbol=None, enabled=None, status=None):
+        items = list(self.store.values())
+        if symbol:
+            items = [item for item in items if item.symbol == symbol]
+        if status == 'active':
+            items = [item for item in items if item.enabled]
+        if status == 'inactive':
+            items = [item for item in items if not item.enabled]
+        if enabled is not None:
+            items = [item for item in items if item.enabled is enabled]
+        return items
 
-    async def upsert_for_watchlist_item(self, _db, item_id: int, payload):
-        if payload.enabled and payload.target_price is None:
-            raise ValueError('targetPrice is required when enabling an alert')
+    async def create_alert(self, _db, payload):
+        if payload.threshold <= 0:
+            raise ValueError('threshold must be greater than zero')
 
+        self.next_id += 1
         now = datetime.now(timezone.utc)
-        current = self.store.get(item_id)
-        target_price = payload.target_price if payload.target_price is not None else (current.target_price if current else None)
         alert = SimpleNamespace(
-            id=(current.id if current else item_id + 200),
-            watchlist_item_id=item_id,
-            symbol='AAPL',
+            id=self.next_id,
+            watchlist_item_id=payload.watchlist_item_id,
+            symbol=(payload.symbol or 'AAPL').upper(),
+            instrument_type='equity',
+            source=payload.source or 'manual',
+            condition=payload.condition,
+            threshold=payload.threshold,
             enabled=payload.enabled,
-            direction=payload.direction,
-            target_price=target_price,
-            created_at=current.created_at if current else now,
+            one_shot=payload.one_shot,
+            cooldown_seconds=payload.cooldown_seconds or 60,
+            last_condition_state=False,
+            last_triggered_at=None,
+            last_triggered_price=None,
+            last_triggered_value=None,
+            last_trigger_source=None,
+            created_at=now,
             updated_at=now,
         )
-        self.store[item_id] = alert
+        self.store[alert.id] = alert
+        return alert
+
+    async def get_alert(self, _db, alert_id: int):
+        return self.store.get(alert_id)
+
+    async def update_alert(self, _db, alert_id: int, payload):
+        alert = self.store.get(alert_id)
+        if alert is None:
+            raise LookupError('Alert not found')
+
+        if payload.enabled is not None:
+            alert.enabled = payload.enabled
+        if payload.threshold is not None:
+            if payload.threshold <= 0:
+                raise ValueError('threshold must be greater than zero')
+            alert.threshold = payload.threshold
+
+        alert.updated_at = datetime.now(timezone.utc)
+        return alert
+
+    async def delete_alert(self, _db, alert_id: int) -> bool:
+        return self.store.pop(alert_id, None) is not None
+
+    async def list_events(self, _db, **_kwargs):
+        return self.events
+
+    async def upsert_for_watchlist_item(self, _db, item_id: int, payload):
+        now = datetime.now(timezone.utc)
+        alert = SimpleNamespace(
+            id=item_id + 50,
+            watchlist_item_id=item_id,
+            symbol='AAPL',
+            instrument_type='equity',
+            source='watchlist',
+            condition='price_above' if payload.direction == 'above' else 'price_below',
+            threshold=payload.target_price or 100,
+            enabled=payload.enabled,
+            one_shot=payload.one_shot,
+            cooldown_seconds=payload.cooldown_seconds or 60,
+            last_condition_state=False,
+            last_triggered_at=None,
+            last_triggered_price=None,
+            last_triggered_value=None,
+            last_trigger_source=None,
+            created_at=now,
+            updated_at=now,
+        )
+        self.store[alert.id] = alert
         return alert
 
     async def delete_for_watchlist_item(self, _db, item_id: int) -> bool:
-        return self.store.pop(item_id, None) is not None
+        for key, value in list(self.store.items()):
+            if value.watchlist_item_id == item_id:
+                self.store.pop(key)
+                return True
+        return False
+
+    def compute_trigger_state(self, _alert, now):
+        return 'armed', False, False
 
 
 async def override_db():
@@ -49,7 +135,7 @@ async def override_db():
 
 
 @pytest.mark.asyncio
-async def test_alert_routes_upsert_and_list(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_alert_routes_crud_and_filters(monkeypatch: pytest.MonkeyPatch) -> None:
     service = FakeAlertService()
     container = type('Container', (), {'price_alerts': service})()
 
@@ -61,22 +147,34 @@ async def test_alert_routes_upsert_and_list(monkeypatch: pytest.MonkeyPatch) -> 
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url='http://test') as client:
-        created = await client.put(
-            '/api/v1/alerts/watchlist/1',
-            json={'enabled': True, 'direction': 'above', 'targetPrice': 123.4},
+        created = await client.post(
+            '/api/v1/alerts',
+            json={
+                'symbol': 'AAPL',
+                'condition': 'price_above',
+                'threshold': 200,
+                'enabled': True,
+                'oneShot': False,
+                'cooldownSeconds': 30,
+            },
         )
-        listed = await client.get('/api/v1/alerts')
+        created_id = created.json()['id']
 
-    assert created.status_code == 200
-    assert created.json()['targetPrice'] == pytest.approx(123.4)
+        listed = await client.get('/api/v1/alerts', params={'symbol': 'AAPL', 'status': 'active'})
+        patched = await client.patch(f'/api/v1/alerts/{created_id}', json={'enabled': False})
+        deleted = await client.delete(f'/api/v1/alerts/{created_id}')
 
+    assert created.status_code == 201
+    assert created.json()['threshold'] == pytest.approx(200)
     assert listed.status_code == 200
-    assert listed.json()['items']
-    assert listed.json()['items'][0]['watchlistItemId'] == 1
+    assert len(listed.json()['items']) == 1
+    assert patched.status_code == 200
+    assert patched.json()['enabled'] is False
+    assert deleted.status_code == 204
 
 
 @pytest.mark.asyncio
-async def test_alert_routes_validation_error(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_alert_routes_event_feed(monkeypatch: pytest.MonkeyPatch) -> None:
     service = FakeAlertService()
     container = type('Container', (), {'price_alerts': service})()
 
@@ -88,7 +186,10 @@ async def test_alert_routes_validation_error(monkeypatch: pytest.MonkeyPatch) ->
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url='http://test') as client:
-        response = await client.put('/api/v1/alerts/watchlist/1', json={'enabled': True, 'direction': 'above'})
+        response = await client.get('/api/v1/alerts/events', params={'afterId': 0, 'limit': 10})
 
-    assert response.status_code == 400
-    assert 'targetPrice' in response.json()['detail']
+    assert response.status_code == 200
+    body = response.json()
+    assert body['items']
+    assert body['items'][0]['symbol'] == 'AAPL'
+    assert body['items'][0]['alertId'] == 777

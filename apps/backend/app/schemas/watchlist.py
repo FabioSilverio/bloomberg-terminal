@@ -7,11 +7,35 @@ from pydantic import AliasChoices, BaseModel, Field
 class WatchlistAlert(BaseModel):
     id: int
     enabled: bool
-    direction: Literal['above', 'below']
-    target_price: Optional[float] = Field(
+    source: str
+    condition: str
+    threshold: float
+    one_shot: bool = Field(
+        serialization_alias='oneShot',
+        validation_alias=AliasChoices('one_shot', 'oneShot'),
+    )
+    cooldown_seconds: int = Field(
+        serialization_alias='cooldownSeconds',
+        validation_alias=AliasChoices('cooldown_seconds', 'cooldownSeconds'),
+    )
+    trigger_state: Literal['armed', 'active', 'cooldown', 'triggered', 'inactive'] = Field(
+        serialization_alias='triggerState',
+        validation_alias=AliasChoices('trigger_state', 'triggerState'),
+    )
+    active: bool
+    in_cooldown: bool = Field(
+        serialization_alias='inCooldown',
+        validation_alias=AliasChoices('in_cooldown', 'inCooldown'),
+    )
+    last_triggered_at: Optional[datetime] = Field(
         default=None,
-        serialization_alias='targetPrice',
-        validation_alias=AliasChoices('target_price', 'targetPrice'),
+        serialization_alias='lastTriggeredAt',
+        validation_alias=AliasChoices('last_triggered_at', 'lastTriggeredAt'),
+    )
+    last_trigger_source: Optional[str] = Field(
+        default=None,
+        serialization_alias='lastTriggerSource',
+        validation_alias=AliasChoices('last_trigger_source', 'lastTriggerSource'),
     )
     updated_at: datetime = Field(
         serialization_alias='updatedAt',
@@ -61,7 +85,7 @@ class WatchlistItemResponse(BaseModel):
         validation_alias=AliasChoices('created_at', 'createdAt'),
     )
     quote: WatchlistQuote | None = None
-    alert: WatchlistAlert | None = None
+    alerts: list[WatchlistAlert] = Field(default_factory=list)
 
 
 class WatchlistResponse(BaseModel):

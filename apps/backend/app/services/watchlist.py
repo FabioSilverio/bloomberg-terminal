@@ -31,26 +31,40 @@ class WatchlistService:
         if not items:
             return WatchlistResponse(as_of=datetime.now(timezone.utc), items=[], warnings=[])
 
-        alert_map = await self._safe_alert_map(db, [item.id for item in items])
-
         quote_results = await asyncio.gather(
             *(self.realtime_market.get_intraday(item.symbol) for item in items),
             return_exceptions=True,
         )
 
+        await self._evaluate_alerts(db, items, quote_results)
+        alerts_by_symbol = await self._safe_alert_map_by_symbol(db, [item.symbol for item in items])
+
         payload_items: list[WatchlistItemResponse] = []
+        now = datetime.now(timezone.utc)
+
         for item, result in zip(items, quote_results):
             quote_payload: WatchlistQuote | None = None
-            alert_payload: WatchlistAlert | None = None
+            alert_payload: list[WatchlistAlert] = []
 
-            alert = alert_map.get(item.id)
-            if alert is not None:
-                alert_payload = WatchlistAlert(
-                    id=alert.id,
-                    enabled=alert.enabled,
-                    direction=alert.direction,
-                    target_price=alert.target_price,
-                    updated_at=alert.updated_at,
+            symbol_alerts = alerts_by_symbol.get(item.symbol, [])
+            for alert in symbol_alerts:
+                trigger_state, active, in_cooldown = self.price_alerts.compute_trigger_state(alert, now=now) if self.price_alerts else ('inactive', False, False)
+                alert_payload.append(
+                    WatchlistAlert(
+                        id=alert.id,
+                        enabled=alert.enabled,
+                        source=alert.source,
+                        condition=alert.condition,
+                        threshold=alert.threshold,
+                        one_shot=alert.one_shot,
+                        cooldown_seconds=alert.cooldown_seconds,
+                        trigger_state=trigger_state,
+                        active=active,
+                        in_cooldown=in_cooldown,
+                        last_triggered_at=alert.last_triggered_at,
+                        last_trigger_source=alert.last_trigger_source,
+                        updated_at=alert.updated_at,
+                    )
                 )
 
             if isinstance(result, Exception):
@@ -78,7 +92,7 @@ class WatchlistService:
                     position=item.position,
                     created_at=item.created_at,
                     quote=quote_payload,
-                    alert=alert_payload,
+                    alerts=alert_payload,
                 )
             )
 
@@ -172,14 +186,34 @@ class WatchlistService:
             item.position = idx
         await db.commit()
 
-    async def _safe_alert_map(self, db: AsyncSession, item_ids: list[int]) -> dict[int, object]:
+    async def _safe_alert_map_by_symbol(self, db: AsyncSession, symbols: list[str]) -> dict[str, list[object]]:
         if self.price_alerts is None:
             return {}
 
         try:
-            return await self.price_alerts.get_alert_map_for_items(db, item_ids)
+            return await self.price_alerts.list_alerts_for_symbols_map(db, symbols)
         except Exception:
             return {}
+
+    async def _evaluate_alerts(self, db: AsyncSession, items: list[WatchlistItem], quote_results: list[object]) -> None:
+        if self.price_alerts is None:
+            return
+
+        for item, quote in zip(items, quote_results):
+            if isinstance(quote, Exception):
+                continue
+
+            try:
+                await self.price_alerts.evaluate_snapshot(
+                    db,
+                    symbol=item.symbol,
+                    last_price=quote.last_price,
+                    change_percent=quote.change_percent,
+                    source=f'watchlist:{quote.source}',
+                    as_of=quote.as_of,
+                )
+            except Exception:
+                continue
 
     @staticmethod
     def _dedupe(items: list[str]) -> list[str]:
