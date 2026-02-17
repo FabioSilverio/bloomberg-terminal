@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
-from pydantic import BaseModel, Field
+
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class MarketPoint(BaseModel):
@@ -7,7 +8,10 @@ class MarketPoint(BaseModel):
     name: str
     price: float
     change: float
-    change_percent: float = Field(serialization_alias='changePercent')
+    change_percent: float = Field(
+        serialization_alias='changePercent',
+        validation_alias=AliasChoices('change_percent', 'changePercent'),
+    )
     currency: str | None = None
     source: str | None = None
 
@@ -21,7 +25,11 @@ class MarketSections(BaseModel):
 
 
 class MarketOverviewResponse(BaseModel):
-    as_of: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), serialization_alias='asOf')
+    as_of: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        serialization_alias='asOf',
+        validation_alias=AliasChoices('as_of', 'asOf'),
+    )
     degraded: bool = False
     warnings: list[str] = Field(default_factory=list)
     sections: MarketSections

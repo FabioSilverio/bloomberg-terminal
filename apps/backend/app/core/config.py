@@ -1,4 +1,5 @@
 from functools import lru_cache
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -20,13 +21,29 @@ class Settings(BaseSettings):
     market_ws_interval_seconds: int = 10
 
     yahoo_timeout_seconds: float = 8.0
+    yahoo_max_retries: int = 2
     yahoo_rate_limit_per_minute: int = 40
+    yahoo_user_agent: str = (
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+        '(KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36'
+    )
+    yahoo_accept_language: str = 'en-US,en;q=0.9'
+    yahoo_endpoints: list[str] = Field(
+        default_factory=lambda: [
+            'https://query1.finance.yahoo.com/v7/finance/quote',
+            'https://query2.finance.yahoo.com/v7/finance/quote',
+        ]
+    )
+
+    stooq_timeout_seconds: float = 8.0
+    stooq_rate_limit_per_minute: int = 30
 
     coingecko_timeout_seconds: float = 8.0
     coingecko_rate_limit_per_minute: int = 20
 
     fred_api_key: str | None = None
     fred_timeout_seconds: float = 8.0
+    fred_public_timeout_seconds: float = 8.0
     fred_rate_limit_per_minute: int = 30
 
     alpha_vantage_api_key: str | None = None
