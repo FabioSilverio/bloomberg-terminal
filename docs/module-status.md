@@ -6,7 +6,7 @@
 | MMAP | ✅ Implemented | Market overview with indices, rates, FX, commodities, crypto; resilient multi-provider backend |
 | INTRA / EQRT | ✅ Implemented | Realtime intraday panel with 1D chart, stream status, Bloomberg-style FX aliases (`EURUSD Curncy`) and fallback stabilization |
 | WL (Watchlist) | ✅ Implemented | Persistent watchlist (stocks + FX) with inline add/remove, quick-open to INTRA, persistence checks, improved empty/error states |
-| ALRT (Price Alerts) | ✅ Implemented | Backend alert model + API and watchlist row toggles for enabling/disabling symbol-level alerts |
+| ALRT (Alerts v2) | ✅ Implemented | Advanced conditions (above/below/crosses/% move), CRUD + filters, cooldown/one-shot, trigger history/events, ALRT panel, command flows, watchlist/INTRA trigger indicators, toast+sound toggle |
 | EQ | ⏳ Next | Equity dashboard + symbol search + price chart + key stats |
 | ECOF | ⏳ Planned | Economic calendar and macro series (FRED) |
 | NEWS | ⏳ Planned | Aggregated market headlines + relevance filters |

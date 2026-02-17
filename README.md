@@ -7,7 +7,7 @@ Production-oriented Bloomberg Terminal-like web app built incrementally.
 - ✅ MMAP module with resilient multi-provider backend
 - ✅ INTRA/EQRT intraday realtime panel (1D chart + stats + stream)
 - ✅ Persistent watchlist for equities/FX (DB model + API + UI + commands)
-- ✅ Price alert framework for watchlist symbols (backend model + API + watchlist toggle UX)
+- ✅ Alerts v2 end-to-end: advanced conditions (above/below/crosses/% move), cooldown + one-shot/repeating, trigger history, ALRT panel, toast/sound notifications, and command flows
 
 See:
 - Implementation plan: `docs/implementation-plan.md`
@@ -79,12 +79,16 @@ npm run dev
 - `WL` → open watchlist panel
 - `WL ADD <SYMBOL>` → persist symbol in watchlist
 - `WL RM <SYMBOL>` → remove symbol from watchlist
+- `ALRT` → open alerts manager panel
+- `ALRT ADD <SYMBOL> <CONDITION> <VALUE>` → create alert (examples: `ALRT ADD AAPL ABOVE 210`, `ALRT ADD EURUSD XBELOW 1.08`, `ALRT ADD AAPL PCTUP 2`)
+- `ALRT RM <ID>` → remove alert by id
 
 Hotkeys:
 - `Ctrl/Cmd + K` → focus command bar
 - `Ctrl/Cmd + Shift + M` → open MMAP
 - `Ctrl/Cmd + Shift + I` → open INTRA AAPL
 - `Ctrl/Cmd + Shift + W` → open WL
+- `Ctrl/Cmd + Shift + A` → open ALRT
 - `Ctrl/Cmd + Shift + ← / →` → cycle active panel
 - `Ctrl/Cmd + Shift + X` → close active panel
 - `Ctrl/Cmd + Shift + D` → toggle panel density mode
@@ -121,9 +125,14 @@ Result: frequent terminal updates without unsafe upstream burst traffic.
 - `POST   /api/v1/watchlist/reorder`
 
 ### Alerts
-- `GET    /api/v1/alerts`
-- `PUT    /api/v1/alerts/watchlist/{item_id}` body: `{ "enabled": true, "direction": "above", "targetPrice": 200 }`
-- `DELETE /api/v1/alerts/watchlist/{item_id}`
+- `GET    /api/v1/alerts?symbol=<optional>&status=<active|inactive>`
+- `POST   /api/v1/alerts` body: `{ "symbol": "AAPL", "condition": "price_above", "threshold": 210, "enabled": true, "oneShot": false, "cooldownSeconds": 60 }`
+- `GET    /api/v1/alerts/{alert_id}`
+- `PATCH  /api/v1/alerts/{alert_id}`
+- `DELETE /api/v1/alerts/{alert_id}`
+- `GET    /api/v1/alerts/events?afterId=<optional>&limit=<optional>`
+- (compat) `PUT    /api/v1/alerts/watchlist/{item_id}`
+- (compat) `DELETE /api/v1/alerts/watchlist/{item_id}`
 
 ### Health
 - `GET /api/v1/health`
@@ -137,6 +146,7 @@ Frontend:
 - `NEXT_PUBLIC_MMAP_REFRESH_INTERVAL_MS` (default `2000`)
 - `NEXT_PUBLIC_INTRADAY_REFRESH_INTERVAL_MS` (default `2000`)
 - `NEXT_PUBLIC_WATCHLIST_REFRESH_INTERVAL_MS` (default `2000`)
+- `NEXT_PUBLIC_ALERTS_POLL_INTERVAL_MS` (default `2000`)
 - `NEXT_PUBLIC_INTRADAY_WS_BASE_URL` (optional override)
 
 Backend:
@@ -145,6 +155,8 @@ Backend:
 - `MARKET_WS_INTERVAL_SECONDS` (default `2`)
 - `INTRADAY_RATE_LIMIT_PER_MINUTE` (default `40`)
 - `WATCHLIST_MAX_ITEMS` (default `40`)
+- `ALERTS_DEFAULT_COOLDOWN_SECONDS` (default `60`)
+- `ALERTS_TRIGGER_DISPLAY_SECONDS` (default `120`)
 
 Full list in `.env.example`.
 
@@ -163,5 +175,13 @@ Coverage now includes:
 - coalesced concurrent MMAP refresh requests
 - intraday symbol normalization (including Bloomberg-style FX aliases), caching, and stale fallback
 - coalesced concurrent intraday requests
-- watchlist add/reorder/remove + quote enrichment
-- alert API validation and watchlist alert mapping
+- watchlist add/reorder/remove + quote enrichment + alert state badges
+- alert API CRUD and events feed
+- alert evaluator crossing logic, cooldown suppression, and one-shot auto-disable
+
+Frontend smoke tests:
+```bash
+cd apps/frontend
+npm run test:run
+```
+Includes ALRT panel rendering and watchlist trigger indicator checks.
