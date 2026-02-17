@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
+import { useTerminalStore } from '@/store/useTerminalStore';
+
 interface StatusBarProps {
   feedback: string;
 }
@@ -25,21 +27,21 @@ function formatClock(date: Date, zone: string): string {
 
 export function StatusBar({ feedback }: StatusBarProps) {
   const [now, setNow] = useState(new Date());
+  const densityMode = useTerminalStore((state) => state.densityMode);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1_000);
     return () => window.clearInterval(timer);
   }, []);
 
-  const clocks = useMemo(
-    () => ZONES.map((zone) => ({ ...zone, value: formatClock(now, zone.zone) })),
-    [now]
-  );
+  const clocks = useMemo(() => ZONES.map((zone) => ({ ...zone, value: formatClock(now, zone.zone) })), [now]);
 
   return (
     <footer className="flex h-8 items-center justify-between border-t border-terminal-line bg-[#0b1119] px-3 text-[11px] text-terminal-muted">
-      <div className="max-w-[65%] truncate text-[#aab6c7]">{feedback}</div>
-      <div className="flex items-center gap-4">
+      <div className="max-w-[58%] truncate text-[#aab6c7]">{feedback}</div>
+      <div className="flex items-center gap-3">
+        <span className="text-[10px] uppercase text-[#8ea0b8]">{densityMode.toUpperCase()}</span>
+        <span className="text-[10px] text-[#6f819c]">⇦⇨ cycle · ⌃⇧X close · ⌃⇧D density</span>
         {clocks.map((clock) => (
           <span key={clock.label} className="font-semibold text-[#d3dfef]">
             {clock.label} <span className="text-terminal-accent">{clock.value}</span>

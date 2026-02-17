@@ -9,9 +9,13 @@ export interface PanelConfig {
   context?: CommandContext;
 }
 
+export type DensityMode = 'normal' | 'compact';
+
 interface TerminalState {
   panels: PanelConfig[];
   layout: Layout[];
+  activePanelId: string | null;
+  densityMode: DensityMode;
   commandFeedback: string;
   mmapRefreshMs: number;
   setLayout: (layout: Layout[]) => void;
@@ -20,6 +24,10 @@ interface TerminalState {
   setPanelContext: (panelId: string, context: CommandContext) => void;
   setCommandFeedback: (feedback: string) => void;
   setMmapRefreshMs: (value: number) => void;
+  setActivePanel: (panelId: string) => void;
+  closePanel: (panelId: string) => void;
+  cyclePanels: (direction: 1 | -1) => void;
+  toggleDensity: () => void;
 }
 
 const DEFAULT_MMAP_REFRESH_MS = Number(process.env.NEXT_PUBLIC_MMAP_REFRESH_INTERVAL_MS ?? 2000);
@@ -74,11 +82,19 @@ const INITIAL_LAYOUT: Layout[] = [
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   panels: INITIAL_PANELS,
   layout: INITIAL_LAYOUT,
+  activePanelId: INITIAL_PANELS[0].id,
+  densityMode: 'compact',
   mmapRefreshMs: Number.isFinite(DEFAULT_MMAP_REFRESH_MS) ? Math.max(500, DEFAULT_MMAP_REFRESH_MS) : 2000,
   commandFeedback: 'Try: MMAP | INTRA AAPL | WL | WL ADD EURUSD',
   setLayout: (layout) => set({ layout }),
   setCommandFeedback: (commandFeedback) => set({ commandFeedback }),
   setMmapRefreshMs: (value) => set({ mmapRefreshMs: Math.max(500, Math.round(value)) }),
+  setActivePanel: (panelId) => {
+    if (!get().panels.some((panel) => panel.id === panelId)) {
+      return;
+    }
+    set({ activePanelId: panelId });
+  },
   focusPanel: (panelId) => {
     const layout = get().layout;
     const selected = layout.find((item) => item.i === panelId);
@@ -94,7 +110,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       }
     ];
 
-    set({ layout: reordered });
+    set({ layout: reordered, activePanelId: panelId });
   },
   setPanelContext: (panelId, context) => {
     const symbol = context.symbol ? normalizeSymbolToken(context.symbol) : undefined;
@@ -119,6 +135,58 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       })
     }));
   },
+  closePanel: (panelId) => {
+    const { panels, layout, activePanelId } = get();
+    if (panels.length <= 1) {
+      set({ commandFeedback: 'At least one panel must remain open.' });
+      return;
+    }
+
+    const index = panels.findIndex((panel) => panel.id === panelId);
+    if (index === -1) {
+      return;
+    }
+
+    const removed = panels[index];
+    const nextPanels = panels.filter((panel) => panel.id !== panelId);
+    const nextLayout = layout.filter((entry) => entry.i !== panelId);
+
+    let nextActivePanelId = activePanelId;
+    if (activePanelId === panelId || !nextPanels.some((panel) => panel.id === activePanelId)) {
+      const fallbackIndex = Math.max(0, index - 1);
+      nextActivePanelId = nextPanels[fallbackIndex]?.id ?? nextPanels[0]?.id ?? null;
+    }
+
+    set({
+      panels: nextPanels,
+      layout: nextLayout,
+      activePanelId: nextActivePanelId,
+      commandFeedback: `Closed ${removed.module}`
+    });
+  },
+  cyclePanels: (direction) => {
+    const { panels, activePanelId } = get();
+    if (panels.length < 2) {
+      return;
+    }
+
+    const activeIndex = panels.findIndex((panel) => panel.id === activePanelId);
+    const start = activeIndex >= 0 ? activeIndex : 0;
+    const nextIndex = (start + direction + panels.length) % panels.length;
+    const nextPanel = panels[nextIndex];
+
+    set({
+      activePanelId: nextPanel.id,
+      commandFeedback: `Focused ${nextPanel.module}`
+    });
+  },
+  toggleDensity: () => {
+    const next = get().densityMode === 'compact' ? 'normal' : 'compact';
+    set({
+      densityMode: next,
+      commandFeedback: `Density ${next.toUpperCase()}`
+    });
+  },
   openModule: (module, context) => {
     const normalizedModule = module === 'EQRT' ? 'INTRA' : module;
     const { panels, layout } = get();
@@ -141,6 +209,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
     if (existing) {
       set({
+        activePanelId: existing.id,
         commandFeedback:
           normalizedModule === 'INTRA' && normalizedContext?.symbol
             ? `INTRA ${normalizedContext.symbol} already open`
@@ -162,8 +231,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       i: nextId,
       x: (panelCount * 3) % 12,
       y: Infinity,
-      w: normalizedModule === 'WL' ? 5 : 6,
-      h: normalizedModule === 'WL' ? 12 : 10,
+      w: normalizedModule === 'WL' ? 6 : 7,
+      h: normalizedModule === 'WL' ? 12 : 11,
       minW: 3,
       minH: 8
     };
@@ -171,6 +240,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     set({
       panels: [...panels, nextPanel],
       layout: [...layout, nextLayout],
+      activePanelId: nextId,
       commandFeedback:
         normalizedModule === 'INTRA' && normalizedContext?.symbol
           ? `Opened INTRA ${normalizedContext.symbol}`

@@ -2,14 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
-import {
-  ColorType,
-  IChartApi,
-  ISeriesApi,
-  LineData,
-  UTCTimestamp,
-  createChart
-} from 'lightweight-charts';
+import { ColorType, IChartApi, ISeriesApi, LineData, UTCTimestamp, createChart } from 'lightweight-charts';
 
 import { useIntraday } from '@/hooks/useIntraday';
 import { IntradayPoint } from '@/lib/api';
@@ -40,7 +33,7 @@ function IntradayChart({ points }: { points: IntradayPoint[] }) {
 
     const chart = createChart(containerRef.current, {
       width: containerRef.current.clientWidth,
-      height: 280,
+      height: 250,
       layout: {
         textColor: '#b8c7db',
         background: { type: ColorType.Solid, color: '#09111b' }
@@ -79,7 +72,7 @@ function IntradayChart({ points }: { points: IntradayPoint[] }) {
 
       chartRef.current.applyOptions({
         width: containerRef.current.clientWidth,
-        height: Math.max(220, containerRef.current.clientHeight)
+        height: Math.max(190, containerRef.current.clientHeight)
       });
     });
 
@@ -112,7 +105,7 @@ function IntradayChart({ points }: { points: IntradayPoint[] }) {
     }
   }, [points]);
 
-  return <div ref={containerRef} className="h-[280px] w-full border border-terminal-line bg-[#09111b]" />;
+  return <div ref={containerRef} className="h-[250px] w-full border border-terminal-line bg-[#09111b]" />;
 }
 
 export function IntradayPanel({ panelId, initialSymbol }: IntradayPanelProps) {
@@ -123,7 +116,7 @@ export function IntradayPanel({ panelId, initialSymbol }: IntradayPanelProps) {
   const setPanelContext = useTerminalStore((state) => state.setPanelContext);
   const setCommandFeedback = useTerminalStore((state) => state.setCommandFeedback);
 
-  const { data, isLoading, isError, error } = useIntraday(activeSymbol);
+  const { data, isLoading, isError, error, streamStatus } = useIntraday(activeSymbol);
 
   useEffect(() => {
     const normalized = normalizeSymbolToken(initialSymbol) || 'AAPL';
@@ -136,7 +129,7 @@ export function IntradayPanel({ panelId, initialSymbol }: IntradayPanelProps) {
 
     const normalized = normalizeSymbolToken(symbolInput);
     if (!normalized) {
-      setCommandFeedback('Enter a valid symbol (examples: AAPL, EURUSD, BTC-USD).');
+      setCommandFeedback('Enter a valid symbol (examples: AAPL, EURUSD, EURUSD Curncy, BTC-USD).');
       return;
     }
 
@@ -158,22 +151,34 @@ export function IntradayPanel({ panelId, initialSymbol }: IntradayPanelProps) {
   return (
     <div className="flex h-full flex-col bg-terminal-panel">
       <form onSubmit={onSubmitSymbol} className="flex items-center gap-2 border-b border-terminal-line px-2 py-1">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-terminal-muted">Symbol</span>
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-terminal-muted">Symbol</span>
         <input
           value={symbolInput}
           onChange={(event) => setSymbolInput(event.target.value)}
-          className="h-7 w-36 border border-[#233044] bg-[#05080d] px-2 text-sm text-[#d7e2f0] outline-none ring-terminal-accent focus:ring-1"
+          className="h-6 w-40 border border-[#233044] bg-[#05080d] px-2 text-xs text-[#d7e2f0] outline-none ring-terminal-accent focus:ring-1"
           spellCheck={false}
         />
         <button
           type="submit"
-          className="h-7 border border-terminal-line bg-[#121b2a] px-2 text-[11px] font-semibold uppercase tracking-wide text-terminal-accent"
+          className="h-6 border border-terminal-line bg-[#121b2a] px-2 text-[10px] font-semibold uppercase tracking-wide text-terminal-accent"
         >
           Load
         </button>
 
-        <div className="ml-auto text-[11px] text-terminal-muted">
-          {data ? `As of ${new Date(data.asOf).toLocaleTimeString()}` : 'Waiting for data...'}
+        <div className="ml-auto flex items-center gap-2 text-[10px] uppercase tracking-wide">
+          <span className="text-terminal-muted">{data ? `As of ${new Date(data.asOf).toLocaleTimeString()}` : 'Waiting...'}</span>
+          <span
+            className={clsx(
+              'rounded-sm border px-1 py-0.5',
+              streamStatus === 'live'
+                ? 'border-[#2f5f45] bg-[#0f2319] text-[#84e9b0]'
+                : streamStatus === 'connecting'
+                  ? 'border-[#60563a] bg-[#201b12] text-[#e9cd84]'
+                  : 'border-[#2b3a53] bg-[#101725] text-[#9eb8de]'
+            )}
+          >
+            {streamStatus}
+          </span>
         </div>
       </form>
 
@@ -241,7 +246,7 @@ export function IntradayPanel({ panelId, initialSymbol }: IntradayPanelProps) {
                 {latestRows.length === 0 && (
                   <tr>
                     <td colSpan={3} className="px-2 py-3 text-terminal-muted">
-                      No intraday points available yet.
+                      No intraday points yet. Try another symbol or wait for the next tick.
                     </td>
                   </tr>
                 )}

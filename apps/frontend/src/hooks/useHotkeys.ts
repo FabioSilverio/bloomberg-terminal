@@ -7,9 +7,18 @@ import { CommandContext, ModuleCode } from '@/lib/modules';
 interface UseHotkeysArgs {
   focusCommandBar: () => void;
   openModule: (code: ModuleCode, context?: CommandContext) => void;
+  cyclePanels: (direction: 1 | -1) => void;
+  closeActivePanel: () => void;
+  toggleDensity: () => void;
 }
 
-export function useHotkeys({ focusCommandBar, openModule }: UseHotkeysArgs) {
+export function useHotkeys({
+  focusCommandBar,
+  openModule,
+  cyclePanels,
+  closeActivePanel,
+  toggleDensity
+}: UseHotkeysArgs) {
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
@@ -31,9 +40,29 @@ export function useHotkeys({ focusCommandBar, openModule }: UseHotkeysArgs) {
         event.preventDefault();
         openModule('WL');
       }
+
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'd') {
+        event.preventDefault();
+        toggleDensity();
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === 'ArrowRight') {
+        event.preventDefault();
+        cyclePanels(1);
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === 'ArrowLeft') {
+        event.preventDefault();
+        cyclePanels(-1);
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'x') {
+        event.preventDefault();
+        closeActivePanel();
+      }
     };
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [focusCommandBar, openModule]);
+  }, [focusCommandBar, openModule, cyclePanels, closeActivePanel, toggleDensity]);
 }

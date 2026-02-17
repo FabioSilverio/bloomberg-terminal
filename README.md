@@ -7,6 +7,7 @@ Production-oriented Bloomberg Terminal-like web app built incrementally.
 - ✅ MMAP module with resilient multi-provider backend
 - ✅ INTRA/EQRT intraday realtime panel (1D chart + stats + stream)
 - ✅ Persistent watchlist for equities/FX (DB model + API + UI + commands)
+- ✅ Price alert framework for watchlist symbols (backend model + API + watchlist toggle UX)
 
 See:
 - Implementation plan: `docs/implementation-plan.md`
@@ -84,6 +85,9 @@ Hotkeys:
 - `Ctrl/Cmd + Shift + M` → open MMAP
 - `Ctrl/Cmd + Shift + I` → open INTRA AAPL
 - `Ctrl/Cmd + Shift + W` → open WL
+- `Ctrl/Cmd + Shift + ← / →` → cycle active panel
+- `Ctrl/Cmd + Shift + X` → close active panel
+- `Ctrl/Cmd + Shift + D` → toggle panel density mode
 - `↑ / ↓` in command bar → command history
 
 ---
@@ -115,6 +119,11 @@ Result: frequent terminal updates without unsafe upstream burst traffic.
 - `DELETE /api/v1/watchlist/{item_id}`
 - `DELETE /api/v1/watchlist/by-symbol/{symbol}`
 - `POST   /api/v1/watchlist/reorder`
+
+### Alerts
+- `GET    /api/v1/alerts`
+- `PUT    /api/v1/alerts/watchlist/{item_id}` body: `{ "enabled": true, "direction": "above", "targetPrice": 200 }`
+- `DELETE /api/v1/alerts/watchlist/{item_id}`
 
 ### Health
 - `GET /api/v1/health`
@@ -152,6 +161,7 @@ pytest
 Coverage now includes:
 - market fallback matrix behavior
 - coalesced concurrent MMAP refresh requests
-- intraday symbol normalization, caching, and stale fallback
+- intraday symbol normalization (including Bloomberg-style FX aliases), caching, and stale fallback
 - coalesced concurrent intraday requests
 - watchlist add/reorder/remove + quote enrichment
+- alert API validation and watchlist alert mapping

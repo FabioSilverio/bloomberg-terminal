@@ -137,7 +137,7 @@ export function CommandBar({ inputRef, onOpenModule, onSetMmapRefresh, onFeedbac
         spellCheck={false}
       />
       <div className="text-[11px] text-terminal-muted">
-        {busy ? 'Running command...' : '↑/↓ history · Ctrl/Cmd+K focus · Ctrl/Cmd+Shift+I INTRA'}
+        {busy ? 'Running command...' : '↑/↓ history · Ctrl/Cmd+K focus · Ctrl/Cmd+Shift+←/→ cycle panels'}
       </div>
     </form>
   );

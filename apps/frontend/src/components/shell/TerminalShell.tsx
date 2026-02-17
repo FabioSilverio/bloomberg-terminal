@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import clsx from 'clsx';
+
 import { CommandBar } from '@/components/shell/CommandBar';
 import { PanelGrid } from '@/components/shell/PanelGrid';
 import { StatusBar } from '@/components/shell/StatusBar';
@@ -13,13 +15,25 @@ export function TerminalShell() {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const openModule = useTerminalStore((state) => state.openModule);
+  const activePanelId = useTerminalStore((state) => state.activePanelId);
+  const closePanel = useTerminalStore((state) => state.closePanel);
+  const cyclePanels = useTerminalStore((state) => state.cyclePanels);
+  const densityMode = useTerminalStore((state) => state.densityMode);
+  const toggleDensity = useTerminalStore((state) => state.toggleDensity);
   const commandFeedback = useTerminalStore((state) => state.commandFeedback);
   const setCommandFeedback = useTerminalStore((state) => state.setCommandFeedback);
   const setMmapRefreshMs = useTerminalStore((state) => state.setMmapRefreshMs);
 
   useHotkeys({
     focusCommandBar: () => inputRef.current?.focus(),
-    openModule
+    openModule,
+    cyclePanels,
+    closeActivePanel: () => {
+      if (activePanelId) {
+        closePanel(activePanelId);
+      }
+    },
+    toggleDensity
   });
 
   useEffect(() => {
@@ -40,7 +54,12 @@ export function TerminalShell() {
   };
 
   return (
-    <main className="flex h-screen flex-col bg-terminal-bg text-[#d7e2f0]">
+    <main
+      className={clsx(
+        'flex h-screen flex-col bg-terminal-bg text-[#d7e2f0]',
+        densityMode === 'compact' ? 'density-compact' : 'density-normal'
+      )}
+    >
       <header className="flex h-9 items-center justify-between border-b border-terminal-line bg-[#070c13] px-3">
         <div className="flex items-center gap-2">
           <span className="text-sm font-bold uppercase tracking-wider text-terminal-accent">OpenBloom</span>

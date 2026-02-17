@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { fetchIntraday, IntradayResponse } from '@/lib/api';
@@ -29,8 +29,11 @@ function resolveIntradayWsEndpoint(symbol: string): string {
   return `ws://localhost/ws/market/intraday/${encoded}`;
 }
 
+export type IntradayStreamStatus = 'polling' | 'connecting' | 'live';
+
 export function useIntraday(symbol: string) {
   const queryClient = useQueryClient();
+  const [streamStatus, setStreamStatus] = useState<IntradayStreamStatus>('polling');
 
   const query = useQuery({
     queryKey: ['intraday', symbol],
@@ -40,13 +43,35 @@ export function useIntraday(symbol: string) {
 
   useEffect(() => {
     if (!symbol) {
+      setStreamStatus('polling');
       return;
     }
 
     let socket: WebSocket | undefined;
+    let isUnmounted = false;
 
     try {
       socket = new WebSocket(resolveIntradayWsEndpoint(symbol));
+      setStreamStatus('connecting');
+
+      socket.onopen = () => {
+        if (!isUnmounted) {
+          setStreamStatus('live');
+        }
+      };
+
+      socket.onclose = () => {
+        if (!isUnmounted) {
+          setStreamStatus('polling');
+        }
+      };
+
+      socket.onerror = () => {
+        if (!isUnmounted) {
+          setStreamStatus('polling');
+        }
+      };
+
       socket.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data) as IntradayResponse | { error?: string };
@@ -59,11 +84,18 @@ export function useIntraday(symbol: string) {
         }
       };
     } catch {
-      // Keep polling path active.
+      setStreamStatus('polling');
     }
 
-    return () => socket?.close();
+    return () => {
+      isUnmounted = true;
+      setStreamStatus('polling');
+      socket?.close();
+    };
   }, [queryClient, symbol]);
 
-  return query;
+  return {
+    ...query,
+    streamStatus
+  };
 }

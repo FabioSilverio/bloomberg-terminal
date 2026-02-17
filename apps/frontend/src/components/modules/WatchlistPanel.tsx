@@ -4,7 +4,13 @@ import { FormEvent, useState } from 'react';
 import clsx from 'clsx';
 import { useQueryClient } from '@tanstack/react-query';
 
-import { addWatchlistSymbol, removeWatchlistItem } from '@/lib/api';
+import {
+  addWatchlistSymbol,
+  fetchWatchlist,
+  removeWatchlistItem,
+  upsertWatchlistAlert,
+  WatchlistItem
+} from '@/lib/api';
 import { normalizeSymbolToken } from '@/lib/modules';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import { useTerminalStore } from '@/store/useTerminalStore';
@@ -18,152 +24,265 @@ function formatValue(value: number | undefined): string {
 
 export function WatchlistPanel() {
   const [symbolInput, setSymbolInput] = useState('AAPL');
-  const [busyItemId, setBusyItemId] = useState<number | null>(null);
-  const [isAdding, setIsAdding] = useState(false);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
 
   const queryClient = useQueryClient();
+  const openModule = useTerminalStore((state) => state.openModule);
   const setCommandFeedback = useTerminalStore((state) => state.setCommandFeedback);
 
-  const { data, isLoading, isError, error } = useWatchlist();
+  const { data, isLoading, isError, error, refetch } = useWatchlist();
+
+  const refreshWatchlist = async () => {
+    await queryClient.invalidateQueries({ queryKey: ['watchlist'] });
+    return queryClient.fetchQuery({
+      queryKey: ['watchlist'],
+      queryFn: fetchWatchlist
+    });
+  };
 
   const onAdd = async (event: FormEvent) => {
     event.preventDefault();
     const symbol = normalizeSymbolToken(symbolInput);
     if (!symbol) {
-      setCommandFeedback('WL ADD requires a symbol.');
+      setCommandFeedback('WL ADD requires a symbol. Examples: AAPL, EURUSD, GBP/JPY.');
       return;
     }
 
-    setIsAdding(true);
+    setBusyKey('add');
     try {
       await addWatchlistSymbol(symbol);
+      const snapshot = await refreshWatchlist();
+      const persisted = snapshot.items.some((item) => item.symbol === symbol);
+      if (!persisted) {
+        throw new Error(`Watchlist add validation failed for ${symbol}.`);
+      }
+
       setCommandFeedback(`Added ${symbol} to watchlist`);
       setSymbolInput(symbol);
-      await queryClient.invalidateQueries({ queryKey: ['watchlist'] });
     } catch (requestError) {
       setCommandFeedback(requestError instanceof Error ? requestError.message : 'Failed to add watchlist symbol');
     } finally {
-      setIsAdding(false);
+      setBusyKey(null);
     }
   };
 
   const onRemove = async (itemId: number, symbol: string) => {
-    setBusyItemId(itemId);
+    setBusyKey(`rm-${itemId}`);
     try {
       await removeWatchlistItem(itemId);
+      const snapshot = await refreshWatchlist();
+      const persisted = snapshot.items.some((item) => item.symbol === symbol);
+      if (persisted) {
+        throw new Error(`Watchlist remove validation failed for ${symbol}.`);
+      }
+
       setCommandFeedback(`Removed ${symbol} from watchlist`);
-      await queryClient.invalidateQueries({ queryKey: ['watchlist'] });
     } catch (requestError) {
       setCommandFeedback(requestError instanceof Error ? requestError.message : 'Failed to remove watchlist symbol');
     } finally {
-      setBusyItemId(null);
+      setBusyKey(null);
     }
   };
 
+  const onOpenIntra = (item: WatchlistItem) => {
+    openModule('INTRA', { symbol: item.symbol });
+    setCommandFeedback(`Opened INTRA ${item.symbol}`);
+  };
+
+  const onToggleAlert = async (item: WatchlistItem) => {
+    setBusyKey(`al-${item.id}`);
+    try {
+      const existing = item.alert;
+      const nextEnabled = !(existing?.enabled ?? false);
+      const targetPrice = existing?.targetPrice ?? item.quote?.lastPrice;
+
+      if (nextEnabled && (targetPrice === undefined || targetPrice <= 0)) {
+        throw new Error(`Cannot enable alert for ${item.displaySymbol} without a valid price.`);
+      }
+
+      await upsertWatchlistAlert(item.id, {
+        enabled: nextEnabled,
+        direction: existing?.direction ?? 'above',
+        targetPrice
+      });
+
+      const snapshot = await refreshWatchlist();
+      const persisted = snapshot.items.find((entry) => entry.id === item.id)?.alert;
+      if (nextEnabled && !persisted?.enabled) {
+        throw new Error(`Alert enable validation failed for ${item.displaySymbol}.`);
+      }
+      if (!nextEnabled && persisted?.enabled) {
+        throw new Error(`Alert disable validation failed for ${item.displaySymbol}.`);
+      }
+
+      setCommandFeedback(
+        nextEnabled
+          ? `Alert armed for ${item.displaySymbol} @ ${formatValue(targetPrice)}`
+          : `Alert disabled for ${item.displaySymbol}`
+      );
+    } catch (requestError) {
+      setCommandFeedback(requestError instanceof Error ? requestError.message : 'Failed to update alert');
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  if (isLoading) {
+    return <div className="p-3 text-sm text-terminal-muted">Loading watchlist...</div>;
+  }
+
+  if (isError) {
+    return (
+      <div className="m-3 flex flex-1 flex-col items-start justify-center gap-3 border border-[#4d2d2d] bg-[#1a1010] p-4 text-sm text-[#ffb5b5]">
+        <div className="font-semibold">Watchlist feed unavailable</div>
+        <div className="text-xs text-[#e7a7a7]">{error instanceof Error ? error.message : 'Unknown error'}</div>
+        <button
+          type="button"
+          onClick={() => refetch()}
+          className="border border-terminal-line bg-[#121b2a] px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-terminal-accent"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return <div className="p-3 text-sm text-terminal-muted">No watchlist data available.</div>;
+  }
+
   return (
     <div className="flex h-full flex-col bg-terminal-panel">
-      <form onSubmit={onAdd} className="flex items-center gap-2 border-b border-terminal-line px-2 py-1">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-terminal-muted">WL ADD</span>
-        <input
-          value={symbolInput}
-          onChange={(event) => setSymbolInput(event.target.value)}
-          className="h-7 w-36 border border-[#233044] bg-[#05080d] px-2 text-sm text-[#d7e2f0] outline-none ring-terminal-accent focus:ring-1"
-          spellCheck={false}
-        />
-        <button
-          type="submit"
-          disabled={isAdding}
-          className="h-7 border border-terminal-line bg-[#121b2a] px-2 text-[11px] font-semibold uppercase tracking-wide text-terminal-accent disabled:opacity-60"
-        >
-          {isAdding ? 'Adding...' : 'Add'}
-        </button>
+      <div className="flex items-center gap-2 border-b border-terminal-line px-2 py-1 text-[11px] uppercase tracking-wide text-terminal-muted">
+        <span>WL</span>
+        <span className="text-[10px] text-[#6f819c]">{data.items.length} symbols</span>
+        <span className="ml-auto text-[10px]">As of {new Date(data.asOf).toLocaleTimeString()}</span>
+      </div>
 
-        <div className="ml-auto text-[11px] text-terminal-muted">
-          {data ? `${data.items.length} symbols` : 'No symbols loaded'}
-        </div>
-      </form>
-
-      {isLoading && <div className="p-3 text-sm text-terminal-muted">Loading watchlist...</div>}
-
-      {isError && (
-        <div className="p-3 text-sm text-terminal-down">
-          Failed to load watchlist: {error instanceof Error ? error.message : 'Unknown error'}
+      {data.warnings.length > 0 && (
+        <div className="mx-2 mt-2 border border-[#493826] bg-[#20160f] px-2 py-1 text-[11px] text-[#ffcc9a]">
+          {data.warnings.join(' | ')}
         </div>
       )}
 
-      {!isLoading && !isError && data && (
-        <>
-          {data.warnings.length > 0 && (
-            <div className="mx-2 mt-2 border border-[#493826] bg-[#20160f] px-2 py-1 text-[11px] text-[#ffcc9a]">
-              {data.warnings.join(' | ')}
-            </div>
-          )}
+      <div className="min-h-0 flex-1 overflow-auto p-2">
+        <table className="w-full border-collapse text-xs">
+          <thead>
+            <tr className="text-left text-[10px] uppercase tracking-wide text-terminal-muted">
+              <th className="px-2 py-1">Symbol</th>
+              <th className="px-2 py-1 text-right">Last</th>
+              <th className="px-2 py-1 text-right">Chg</th>
+              <th className="px-2 py-1 text-right">Vol</th>
+              <th className="px-2 py-1 text-right">Alert</th>
+              <th className="px-2 py-1 text-right">Act</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="border-t border-[#152033] bg-[#0b1119]">
+              <td colSpan={6} className="px-2 py-1.5">
+                <form onSubmit={onAdd} className="flex items-center gap-2">
+                  <span className="text-[10px] uppercase tracking-wide text-terminal-muted">WL ADD</span>
+                  <input
+                    value={symbolInput}
+                    onChange={(event) => setSymbolInput(event.target.value)}
+                    className="h-6 w-36 border border-[#233044] bg-[#05080d] px-2 text-xs text-[#d7e2f0] outline-none ring-terminal-accent focus:ring-1"
+                    spellCheck={false}
+                    placeholder="AAPL / EURUSD"
+                  />
+                  <button
+                    type="submit"
+                    disabled={busyKey === 'add'}
+                    className="h-6 border border-terminal-line bg-[#121b2a] px-2 text-[10px] font-semibold uppercase tracking-wide text-terminal-accent disabled:opacity-60"
+                  >
+                    {busyKey === 'add' ? 'Adding...' : 'Add'}
+                  </button>
+                </form>
+              </td>
+            </tr>
 
-          <div className="min-h-0 flex-1 overflow-auto p-2">
-            <table className="w-full border-collapse text-xs">
-              <thead>
-                <tr className="text-left text-[10px] uppercase tracking-wide text-terminal-muted">
-                  <th className="px-2 py-1">Symbol</th>
-                  <th className="px-2 py-1 text-right">Last</th>
-                  <th className="px-2 py-1 text-right">Chg</th>
-                  <th className="px-2 py-1 text-right">Vol</th>
-                  <th className="px-2 py-1 text-right">Act</th>
+            {data.items.map((item) => {
+              const quote = item.quote;
+              const change = quote?.change ?? 0;
+              const changePercent = quote?.changePercent ?? 0;
+              const alertEnabled = item.alert?.enabled ?? false;
+
+              return (
+                <tr key={item.id} className="border-t border-[#152033] hover:bg-[#10192a]">
+                  <td className="px-2 py-1 font-semibold text-[#e5eefb]">
+                    <button
+                      type="button"
+                      onClick={() => onOpenIntra(item)}
+                      className="inline-flex items-center gap-1 border border-transparent px-0.5 py-0.5 text-left text-inherit hover:border-[#2d3b54] hover:bg-[#0e1521]"
+                      title={`Open INTRA ${item.symbol}`}
+                    >
+                      <span>{item.displaySymbol}</span>
+                      <span className="text-[10px] text-terminal-muted">{item.instrumentType.toUpperCase()}</span>
+                    </button>
+                  </td>
+                  <td className="px-2 py-1 text-right text-[#e0ebfa]">{formatValue(quote?.lastPrice)}</td>
+                  <td
+                    className={clsx(
+                      'px-2 py-1 text-right font-semibold',
+                      change >= 0 ? 'text-terminal-up' : 'text-terminal-down'
+                    )}
+                  >
+                    {change >= 0 ? '+' : ''}
+                    {change.toFixed(2)} ({changePercent >= 0 ? '+' : ''}
+                    {changePercent.toFixed(2)}%)
+                  </td>
+                  <td className="px-2 py-1 text-right text-[#c2d0e5]">{formatValue(quote?.volume)}</td>
+                  <td className="px-2 py-1 text-right">
+                    <button
+                      type="button"
+                      disabled={busyKey === `al-${item.id}`}
+                      onClick={() => onToggleAlert(item)}
+                      className={clsx(
+                        'border px-2 py-0.5 text-[10px] uppercase tracking-wide disabled:opacity-60',
+                        alertEnabled
+                          ? 'border-[#3f6e4f] bg-[#112419] text-[#8de8b2]'
+                          : 'border-terminal-line bg-[#121b2a] text-terminal-accent'
+                      )}
+                      title={
+                        alertEnabled
+                          ? `Alert ON @ ${formatValue(item.alert?.targetPrice)}`
+                          : 'Enable alert at current price'
+                      }
+                    >
+                      {busyKey === `al-${item.id}`
+                        ? '...'
+                        : alertEnabled
+                          ? `ON ${formatValue(item.alert?.targetPrice)}`
+                          : 'OFF'}
+                    </button>
+                  </td>
+                  <td className="px-2 py-1 text-right">
+                    <button
+                      type="button"
+                      disabled={busyKey === `rm-${item.id}`}
+                      onClick={() => onRemove(item.id, item.symbol)}
+                      className="border border-terminal-line bg-[#121b2a] px-2 py-0.5 text-[10px] uppercase tracking-wide text-terminal-accent disabled:opacity-60"
+                    >
+                      {busyKey === `rm-${item.id}` ? '...' : 'RM'}
+                    </button>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {data.items.map((item) => {
-                  const quote = item.quote;
-                  const change = quote?.change ?? 0;
-                  const changePercent = quote?.changePercent ?? 0;
+              );
+            })}
 
-                  return (
-                    <tr key={item.id} className="border-t border-[#152033]">
-                      <td className="px-2 py-1 font-semibold text-[#e5eefb]">
-                        {item.displaySymbol}
-                        <span className="ml-1 text-[10px] text-terminal-muted">{item.instrumentType.toUpperCase()}</span>
-                      </td>
-                      <td className="px-2 py-1 text-right text-[#e0ebfa]">{formatValue(quote?.lastPrice)}</td>
-                      <td
-                        className={clsx(
-                          'px-2 py-1 text-right font-semibold',
-                          change >= 0 ? 'text-terminal-up' : 'text-terminal-down'
-                        )}
-                      >
-                        {change >= 0 ? '+' : ''}
-                        {change.toFixed(2)} ({changePercent >= 0 ? '+' : ''}
-                        {changePercent.toFixed(2)}%)
-                      </td>
-                      <td className="px-2 py-1 text-right text-[#c2d0e5]">{formatValue(quote?.volume)}</td>
-                      <td className="px-2 py-1 text-right">
-                        <button
-                          type="button"
-                          disabled={busyItemId === item.id}
-                          onClick={() => onRemove(item.id, item.symbol)}
-                          className="border border-terminal-line bg-[#121b2a] px-2 py-0.5 text-[10px] uppercase tracking-wide text-terminal-accent disabled:opacity-60"
-                        >
-                          {busyItemId === item.id ? '...' : 'RM'}
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-
-                {data.items.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="px-2 py-3 text-terminal-muted">
-                      Watchlist is empty. Add symbols with WL ADD &lt;symbol&gt;.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="border-t border-terminal-line px-2 py-1 text-[10px] uppercase tracking-wide text-terminal-muted">
-            {data.items.length > 0 ? `Updated ${new Date(data.asOf).toLocaleTimeString()}` : 'WL READY'}
-          </div>
-        </>
-      )}
+            {data.items.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-2 py-4">
+                  <div className="flex flex-col gap-2 border border-terminal-line bg-[#0b1119] p-3 text-[11px] text-terminal-muted">
+                    <div className="font-semibold text-[#d3deee]">Watchlist is empty.</div>
+                    <div>Add symbols inline above or via command bar: WL ADD AAPL / WL ADD EURUSD.</div>
+                    <div>Tip: click any symbol row to quick-open INTRA.</div>
+                  </div>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
