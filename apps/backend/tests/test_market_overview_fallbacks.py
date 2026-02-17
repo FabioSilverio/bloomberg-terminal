@@ -4,7 +4,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 import pytest
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 
+from app.api.routes import market as market_routes
 from app.core.config import Settings
 from app.schemas.market import MarketOverviewResponse, MarketPoint, MarketSections
 from app.services.market_overview import MarketOverviewService
@@ -144,3 +147,56 @@ async def test_serves_stale_cache_when_all_providers_fail() -> None:
     assert response.degraded is True
     assert response.sections.crypto[0].source == 'stale'
     assert any('Serving stale market cache due to provider failures.' in warning for warning in response.warnings)
+
+
+@pytest.mark.asyncio
+async def test_returns_degraded_empty_snapshot_when_all_providers_fail_and_no_stale_cache() -> None:
+    settings = Settings(
+        redis_url='',
+        fred_api_key=None,
+        yahoo_endpoints=['https://query1.finance.yahoo.com/v7/finance/quote'],
+        market_cache_ttl_seconds=1,
+        market_stale_ttl_seconds=60,
+    )
+
+    service = MarketOverviewService(settings=settings, cache=FakeCache(), http_client=FakeHttp(fail_all=True))
+    response = await service.get_overview()
+
+    assert response.degraded is True
+    assert response.sections.indices == []
+    assert response.sections.rates == []
+    assert response.sections.fx == []
+    assert response.sections.commodities == []
+    assert response.sections.crypto == []
+    assert any('No live market data available from providers and no stale cache was found.' in warning for warning in response.warnings)
+
+
+@pytest.mark.asyncio
+async def test_market_overview_endpoint_returns_200_when_all_providers_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = Settings(
+        redis_url='',
+        fred_api_key=None,
+        yahoo_endpoints=['https://query1.finance.yahoo.com/v7/finance/quote'],
+        market_cache_ttl_seconds=1,
+        market_stale_ttl_seconds=60,
+    )
+    service = MarketOverviewService(settings=settings, cache=FakeCache(), http_client=FakeHttp(fail_all=True))
+    container = type('Container', (), {'market_overview': service, 'settings': settings})()
+
+    monkeypatch.setattr(market_routes, 'get_container', lambda: container)
+
+    app = FastAPI()
+    app.include_router(market_routes.router, prefix='/api/v1')
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url='http://test') as client:
+        response = await client.get('/api/v1/market/overview')
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['degraded'] is True
+    assert payload['sections']['indices'] == []
+    assert payload['sections']['rates'] == []
+    assert payload['sections']['fx'] == []
+    assert payload['sections']['commodities'] == []
+    assert payload['sections']['crypto'] == []

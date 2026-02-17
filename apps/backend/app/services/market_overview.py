@@ -179,12 +179,13 @@ class MarketOverviewService:
                 stale_warnings.append('Serving stale market cache due to provider failures.')
                 return stale_model.model_copy(update={'degraded': True, 'warnings': self._dedupe(stale_warnings)})
 
-            raise RuntimeError('No market data sources available and no stale cache to serve')
+            warnings.append('No live market data available from providers and no stale cache was found.')
+            logger.warning('No market data sources available and no stale cache to serve; returning degraded empty overview')
 
         response = MarketOverviewResponse(
             as_of=datetime.now(timezone.utc),
             degraded=len(warnings) > 0,
-            warnings=warnings,
+            warnings=self._dedupe(warnings),
             sections=sections,
         )
 
