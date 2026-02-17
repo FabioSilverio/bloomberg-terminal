@@ -30,6 +30,9 @@ vi.mock('@/hooks/useIntraday', () => ({
       changePercent: 0.6,
       volume: 1234,
       stale: false,
+      freshnessSeconds: 12,
+      sourceRefreshIntervalSeconds: 60,
+      upstreamRefreshIntervalSeconds: 4,
       warnings: [],
       points: [
         {
@@ -83,5 +86,7 @@ describe('IntradayPanel', () => {
     expect(await screen.findByText('Examples: USD/BRL, USDBRL, BRLUSD, AAPL, BTCUSD')).toBeInTheDocument();
     expect(screen.getByDisplayValue('USD/BRL')).toBeInTheDocument();
     expect(screen.getByText('live')).toBeInTheDocument();
+    expect(screen.getByText(/Updated 12s ago/i)).toBeInTheDocument();
+    expect(screen.getByText(/Provider cadence: ~1m/i)).toBeInTheDocument();
   });
 });

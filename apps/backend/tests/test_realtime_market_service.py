@@ -33,12 +33,35 @@ class FakeCache:
 class FakeHttp:
     def __init__(self) -> None:
         self.yahoo_calls = 0
+        self.awesomeapi_calls = 0
         self.fail_yahoo = False
         self.fail_stooq = False
+        self.fail_awesomeapi = True
         self.latency_seconds = 0.0
         self.return_sparse_chart = False
+        self.awesomeapi_price = 5.20
 
     async def get_json(self, url: str, **kwargs: Any) -> Any:
+        if 'economia.awesomeapi.com.br/json/last/' in url:
+            self.awesomeapi_calls += 1
+            if self.fail_awesomeapi:
+                raise RuntimeError('awesomeapi down')
+
+            now = int(datetime.now(timezone.utc).timestamp())
+            self.awesomeapi_price += 0.01
+            return {
+                'USDBRL': {
+                    'code': 'USD',
+                    'codein': 'BRL',
+                    'bid': f'{self.awesomeapi_price:.4f}',
+                    'ask': f'{self.awesomeapi_price + 0.0003:.4f}',
+                    'varBid': '0.01',
+                    'pctChange': '0.19',
+                    'timestamp': str(now),
+                    'create_date': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
+                }
+            }
+
         if 'finance.yahoo.com/v8/finance/chart' not in url:
             raise RuntimeError(f'unexpected url: {url}')
 
@@ -118,6 +141,7 @@ def build_settings(**overrides: Any) -> Settings:
         'redis_url': '',
         'market_cache_ttl_seconds': 2,
         'market_upstream_refresh_seconds': 120,
+        'market_fx_upstream_refresh_seconds': 4,
         'market_stale_ttl_seconds': 300,
         'yahoo_endpoints': ['https://query1.finance.yahoo.com/v7/finance/quote'],
     }
@@ -134,6 +158,8 @@ async def test_normalize_symbol_supports_equity_fx_and_aliases() -> None:
     fx = service.normalize_symbol('eur/usd')
     fx_alt = service.normalize_symbol('EURUSD')
     fx_bbg = service.normalize_symbol('eurusd curncy')
+    fx_usd_brl_slash = service.normalize_symbol('USD/BRL')
+    fx_usd_brl_dash = service.normalize_symbol('USD-BRL')
     fx_brl_reverse = service.normalize_symbol('brlusd')
 
     assert eq.provider_symbol == 'AAPL'
@@ -149,6 +175,9 @@ async def test_normalize_symbol_supports_equity_fx_and_aliases() -> None:
     assert fx_alt.provider_symbol == 'EURUSD=X'
     assert fx_bbg.provider_symbol == 'EURUSD=X'
     assert fx_bbg.display_symbol == 'EUR/USD'
+
+    assert fx_usd_brl_slash.canonical == 'USDBRL'
+    assert fx_usd_brl_dash.canonical == 'USDBRL'
 
     assert fx_brl_reverse.canonical == 'USDBRL'
     assert fx_brl_reverse.provider_symbol == 'USDBRL=X'
@@ -196,6 +225,63 @@ async def test_intraday_synthesizes_point_when_chart_series_is_empty() -> None:
     assert payload.last_price == pytest.approx(111.25)
     assert len(payload.points) == 1
     assert payload.points[0].price == pytest.approx(111.25)
+
+
+@pytest.mark.asyncio
+async def test_fx_intraday_prefers_awesomeapi_and_appends_realtime_points() -> None:
+    cache = FakeCache()
+    http = FakeHttp()
+    http.fail_awesomeapi = False
+
+    service = RealtimeMarketService(
+        build_settings(
+            market_cache_ttl_seconds=0,
+            market_fx_upstream_refresh_seconds=0,
+        ),
+        cache,
+        http,
+    )
+
+    first = await service.get_intraday('USD/BRL')
+    cache.store.pop('market:intraday:USDBRL:ui', None)
+    second = await service.get_intraday('USDBRL')
+
+    assert first.source == 'AwesomeAPI FX'
+    assert first.symbol == 'USDBRL'
+    assert second.last_price > first.last_price
+    assert second.source_refresh_interval_seconds == 60
+    assert second.upstream_refresh_interval_seconds == 0
+    assert len(second.points) >= len(first.points)
+    assert second.points[-1].price == pytest.approx(second.last_price)
+    assert http.awesomeapi_calls >= 2
+
+
+@pytest.mark.asyncio
+async def test_fx_refresh_cadence_is_separate_from_generic_upstream_refresh() -> None:
+    cache = FakeCache()
+    http = FakeHttp()
+    http.fail_awesomeapi = False
+
+    service = RealtimeMarketService(
+        build_settings(
+            market_cache_ttl_seconds=0,
+            market_upstream_refresh_seconds=120,
+            market_fx_upstream_refresh_seconds=0,
+        ),
+        cache,
+        http,
+    )
+
+    await service.get_intraday('USD-BRL')
+    cache.store.pop('market:intraday:USDBRL:ui', None)
+    await service.get_intraday('USDBRL')
+
+    await service.get_intraday('AAPL')
+    cache.store.pop('market:intraday:AAPL:ui', None)
+    await service.get_intraday('AAPL')
+
+    assert http.awesomeapi_calls == 2
+    assert http.yahoo_calls == 1
 
 
 @pytest.mark.asyncio

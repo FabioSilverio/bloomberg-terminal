@@ -42,5 +42,15 @@ class IntradayResponse(BaseModel):
         serialization_alias='freshnessSeconds',
         validation_alias=AliasChoices('freshness_seconds', 'freshnessSeconds'),
     )
+    source_refresh_interval_seconds: int | None = Field(
+        default=None,
+        serialization_alias='sourceRefreshIntervalSeconds',
+        validation_alias=AliasChoices('source_refresh_interval_seconds', 'sourceRefreshIntervalSeconds'),
+    )
+    upstream_refresh_interval_seconds: int | None = Field(
+        default=None,
+        serialization_alias='upstreamRefreshIntervalSeconds',
+        validation_alias=AliasChoices('upstream_refresh_interval_seconds', 'upstreamRefreshIntervalSeconds'),
+    )
     warnings: list[str] = Field(default_factory=list)
     points: list[IntradayPoint] = Field(default_factory=list)

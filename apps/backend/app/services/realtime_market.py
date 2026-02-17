@@ -56,6 +56,11 @@ FX_ALIAS_MAP = {
     'BRLUSD': 'USDBRL',
 }
 
+YAHOO_CHART_INTERVAL_SECONDS = 5 * 60
+AWESOMEAPI_REFRESH_INTERVAL_SECONDS = 60
+STOOQ_REFRESH_INTERVAL_SECONDS = 15 * 60
+MAX_INTRADAY_POINTS = 240
+
 logger = logging.getLogger(__name__)
 
 
@@ -74,6 +79,7 @@ class RealtimeMarketService:
         self.http = http_client
         self.yahoo_limiter = AsyncRateLimiter(max_calls=settings.intraday_rate_limit_per_minute, period_seconds=60)
         self.stooq_limiter = AsyncRateLimiter(max_calls=settings.stooq_rate_limit_per_minute, period_seconds=60)
+        self.fx_limiter = AsyncRateLimiter(max_calls=settings.fx_rate_limit_per_minute, period_seconds=60)
         self._locks_guard = asyncio.Lock()
         self._symbol_locks: dict[str, asyncio.Lock] = {}
 
@@ -168,17 +174,18 @@ class RealtimeMarketService:
                     return IntradayResponse.model_validate(cached_ui)
 
                 upstream_response, upstream_fetched_at = await self._load_upstream_snapshot(upstream_key)
+                upstream_refresh_seconds = self._upstream_refresh_seconds_for(descriptor.instrument_type)
                 should_refresh_live = (
                     upstream_response is None
                     or upstream_fetched_at is None
-                    or (datetime.now(timezone.utc) - upstream_fetched_at).total_seconds()
-                    >= self.settings.market_upstream_refresh_seconds
+                    or upstream_refresh_seconds <= 0
+                    or (datetime.now(timezone.utc) - upstream_fetched_at).total_seconds() >= upstream_refresh_seconds
                 )
 
                 response: IntradayResponse | None = upstream_response
 
                 if should_refresh_live:
-                    live_response = await self._fetch_live_intraday(descriptor)
+                    live_response = await self._fetch_live_intraday(descriptor, previous_response=upstream_response)
                     if live_response is not None:
                         response = live_response
                         await self.cache.set(
@@ -206,7 +213,12 @@ class RealtimeMarketService:
                     response = self._empty_intraday_response(descriptor, warnings=['No intraday data available.'])
 
                 freshness_seconds = int(max((datetime.now(timezone.utc) - response.as_of).total_seconds(), 0))
-                response = response.model_copy(update={'freshness_seconds': freshness_seconds})
+                response = response.model_copy(
+                    update={
+                        'freshness_seconds': freshness_seconds,
+                        'upstream_refresh_interval_seconds': upstream_refresh_seconds,
+                    }
+                )
 
                 await self.cache.set(
                     ui_key,
@@ -247,11 +259,30 @@ class RealtimeMarketService:
                 self._symbol_locks[key_suffix] = lock
             return lock
 
-    async def _fetch_live_intraday(self, descriptor: SymbolDescriptor) -> IntradayResponse | None:
+    def _upstream_refresh_seconds_for(self, instrument_type: str) -> int:
+        if instrument_type == 'fx':
+            return max(0, int(self.settings.market_fx_upstream_refresh_seconds))
+        return max(0, int(self.settings.market_upstream_refresh_seconds))
+
+    async def _fetch_live_intraday(
+        self,
+        descriptor: SymbolDescriptor,
+        *,
+        previous_response: IntradayResponse | None,
+    ) -> IntradayResponse | None:
         warnings: list[str] = []
 
+        if descriptor.instrument_type == 'fx':
+            try:
+                return await self._fetch_awesomeapi_fx_intraday(descriptor, previous_response=previous_response)
+            except Exception as exc:
+                warnings.append(f'AwesomeAPI FX unavailable ({self._summarize_error(exc)}).')
+
         try:
-            return await self._fetch_yahoo_intraday(descriptor)
+            yahoo_response = await self._fetch_yahoo_intraday(descriptor)
+            if warnings:
+                yahoo_response = yahoo_response.model_copy(update={'warnings': self._dedupe([*yahoo_response.warnings, *warnings])})
+            return yahoo_response
         except Exception as exc:
             warnings.append(f'Yahoo chart unavailable ({self._summarize_error(exc)}).')
 
@@ -264,6 +295,85 @@ class RealtimeMarketService:
             warnings.append(f'Stooq snapshot unavailable ({self._summarize_error(exc)}).')
 
         return None
+
+    async def _fetch_awesomeapi_fx_intraday(
+        self,
+        descriptor: SymbolDescriptor,
+        *,
+        previous_response: IntradayResponse | None,
+    ) -> IntradayResponse:
+        if descriptor.instrument_type != 'fx':
+            raise RuntimeError('AwesomeAPI provider is only available for FX symbols')
+
+        await self.fx_limiter.acquire()
+
+        pair = f'{descriptor.canonical[:3]}-{descriptor.canonical[3:]}'
+        payload = await self.http.get_json(
+            f'https://economia.awesomeapi.com.br/json/last/{pair}',
+            timeout=self.settings.fx_timeout_seconds,
+            retries=1,
+            headers={
+                'Accept': 'application/json,text/plain,*/*',
+                'User-Agent': self.settings.yahoo_user_agent,
+            },
+        )
+
+        quote = self._extract_awesomeapi_quote(payload, descriptor.canonical)
+        if quote is None:
+            raise RuntimeError('AwesomeAPI returned no quote for pair')
+
+        last_price = self._safe_float(quote.get('bid'))
+        if last_price is None:
+            last_price = self._safe_float(quote.get('ask'))
+        if last_price is None:
+            raise RuntimeError('AwesomeAPI quote has no bid/ask value')
+
+        as_of = self._parse_unix_seconds(quote.get('timestamp'))
+        if as_of is None:
+            as_of = self._parse_awesomeapi_datetime(quote.get('create_date'))
+        if as_of is None:
+            as_of = datetime.now(timezone.utc)
+
+        change = self._safe_float(quote.get('varBid'))
+        change_percent = self._safe_float(quote.get('pctChange'))
+
+        if change is None and previous_response is not None and previous_response.symbol == descriptor.canonical:
+            change = last_price - previous_response.last_price
+            if previous_response.last_price not in (None, 0):
+                change_percent = (change / previous_response.last_price) * 100
+
+        if change is None:
+            change = 0.0
+        if change_percent is None:
+            baseline = last_price - change
+            change_percent = (change / baseline * 100) if baseline not in (None, 0) else 0.0
+
+        points = self._merge_realtime_points(
+            previous_response=previous_response,
+            as_of=as_of,
+            price=last_price,
+        )
+
+        warnings: list[str] = []
+        if change == 0 and change_percent == 0:
+            warnings.append('FX provider reported no price change on latest tick.')
+
+        return IntradayResponse(
+            symbol=descriptor.canonical,
+            display_symbol=descriptor.display_symbol,
+            instrument_type='fx',
+            source='AwesomeAPI FX',
+            as_of=as_of,
+            last_price=last_price,
+            change=change,
+            change_percent=change_percent,
+            volume=None,
+            currency=descriptor.canonical[3:],
+            stale=False,
+            source_refresh_interval_seconds=AWESOMEAPI_REFRESH_INTERVAL_SECONDS,
+            warnings=warnings,
+            points=points,
+        )
 
     async def _fetch_yahoo_intraday(self, descriptor: SymbolDescriptor) -> IntradayResponse:
         await self.yahoo_limiter.acquire()
@@ -377,6 +487,7 @@ class RealtimeMarketService:
             volume=volume,
             currency=meta.get('currency') if isinstance(meta.get('currency'), str) else None,
             stale=False,
+            source_refresh_interval_seconds=YAHOO_CHART_INTERVAL_SECONDS,
             warnings=[],
             points=points,
         )
@@ -447,9 +558,85 @@ class RealtimeMarketService:
             volume=self._safe_float(row[7]) if len(row) > 7 else None,
             currency='USD' if descriptor.instrument_type in {'equity', 'crypto'} else None,
             stale=True,
-            warnings=['Near real-time snapshot from fallback source.'],
+            source_refresh_interval_seconds=STOOQ_REFRESH_INTERVAL_SECONDS,
+            warnings=['Near real-time snapshot from fallback source (can lag by ~15 minutes).'],
             points=points,
         )
+
+    @staticmethod
+    def _extract_awesomeapi_quote(payload: Any, canonical_symbol: str) -> dict[str, Any] | None:
+        if not isinstance(payload, dict):
+            return None
+
+        preferred_key = canonical_symbol.upper()
+        candidate = payload.get(preferred_key)
+        if isinstance(candidate, dict):
+            return candidate
+
+        # Fallback to first row for responses keyed by normalized aliases.
+        for value in payload.values():
+            if isinstance(value, dict):
+                return value
+
+        return None
+
+    @staticmethod
+    def _merge_realtime_points(
+        *,
+        previous_response: IntradayResponse | None,
+        as_of: datetime,
+        price: float,
+    ) -> list[IntradayPoint]:
+        seed_points: list[IntradayPoint] = []
+
+        if previous_response is not None:
+            for point in previous_response.points[-MAX_INTRADAY_POINTS:]:
+                if point.time >= as_of:
+                    continue
+                seed_points.append(point)
+
+        seed_points.append(
+            IntradayPoint(
+                time=as_of,
+                price=price,
+                volume=None,
+            )
+        )
+
+        by_timestamp: dict[int, IntradayPoint] = {}
+        for point in seed_points:
+            ts_key = int(point.time.timestamp())
+            by_timestamp[ts_key] = point
+
+        merged = [by_timestamp[key] for key in sorted(by_timestamp)]
+        if len(merged) > MAX_INTRADAY_POINTS:
+            merged = merged[-MAX_INTRADAY_POINTS:]
+
+        return merged
+
+    @staticmethod
+    def _parse_unix_seconds(value: Any) -> datetime | None:
+        as_float = RealtimeMarketService._safe_float(value)
+        if as_float is None:
+            return None
+        if as_float <= 0:
+            return None
+        return datetime.fromtimestamp(as_float, tz=timezone.utc)
+
+    @staticmethod
+    def _parse_awesomeapi_datetime(value: Any) -> datetime | None:
+        if not isinstance(value, str) or not value.strip():
+            return None
+
+        candidate = value.strip().replace(' ', 'T')
+        try:
+            parsed = datetime.fromisoformat(candidate)
+        except ValueError:
+            return None
+
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
 
     @staticmethod
     def _normalize_fx_pair(base: str, quote_ccy: str) -> str:

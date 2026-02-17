@@ -22,6 +22,27 @@ function formatNumber(value: number | undefined): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
+function formatDuration(seconds: number | undefined): string {
+  if (seconds === undefined || seconds === null || !Number.isFinite(seconds) || seconds < 0) {
+    return '--';
+  }
+
+  if (seconds < 60) {
+    return `${Math.floor(seconds)}s`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.floor(seconds % 60);
+
+  if (minutes < 60) {
+    return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+}
+
 function toLineSeriesData(points: IntradayPoint[]): LineData[] {
   const byTime = new Map<number, number>();
 
@@ -200,6 +221,15 @@ export function IntradayPanel({ panelId, initialSymbol }: IntradayPanelProps) {
   }, [points]);
 
   const loadingTooLong = loadingSince !== null && Date.now() - loadingSince > 7000;
+  const liveAgeSeconds = data
+    ? (typeof data.freshnessSeconds === 'number'
+        ? data.freshnessSeconds
+        : Math.max(0, Math.floor((Date.now() - new Date(data.asOf).getTime()) / 1000)))
+    : undefined;
+
+  const liveAgeLabel = formatDuration(liveAgeSeconds);
+  const providerCadenceLabel = formatDuration(data?.sourceRefreshIntervalSeconds);
+  const upstreamCadenceLabel = formatDuration(data?.upstreamRefreshIntervalSeconds);
 
   return (
     <div className="flex h-full flex-col bg-terminal-panel">
@@ -221,7 +251,9 @@ export function IntradayPanel({ panelId, initialSymbol }: IntradayPanelProps) {
         <span className="text-[10px] text-terminal-muted">Examples: USD/BRL, USDBRL, BRLUSD, AAPL, BTCUSD</span>
 
         <div className="ml-auto flex items-center gap-2 text-[10px] uppercase tracking-wide">
-          <span className="text-terminal-muted">{data ? `As of ${new Date(data.asOf).toLocaleTimeString()}` : 'Waiting...'}</span>
+          <span className="text-terminal-muted">
+            {data ? `As of ${new Date(data.asOf).toLocaleTimeString()} · Updated ${liveAgeLabel} ago` : 'Waiting...'}
+          </span>
           {triggeredAlerts.length > 0 ? (
             <span className="rounded-sm border border-[#8f7c2d] bg-[#2a2410] px-1 py-0.5 text-[#ffdf7a]">
               Alert Triggered ({triggeredAlerts.length})
@@ -287,6 +319,13 @@ export function IntradayPanel({ panelId, initialSymbol }: IntradayPanelProps) {
             <div>
               <div className="text-[10px] uppercase tracking-wide text-terminal-muted">Source</div>
               <div className="text-sm font-semibold text-[#d9e5f7]">{data.source}</div>
+              <div className="text-[10px] text-terminal-muted">Data age: {liveAgeLabel}</div>
+              {data.sourceRefreshIntervalSeconds ? (
+                <div className="text-[10px] text-terminal-muted">Provider cadence: ~{providerCadenceLabel}</div>
+              ) : null}
+              {data.upstreamRefreshIntervalSeconds ? (
+                <div className="text-[10px] text-terminal-muted">Upstream poll: every ~{upstreamCadenceLabel}</div>
+              ) : null}
             </div>
           </div>
 
