@@ -14,6 +14,11 @@ class MarketPoint(BaseModel):
     )
     currency: str | None = None
     source: str | None = None
+    as_of: datetime | None = Field(
+        default=None,
+        serialization_alias='asOf',
+        validation_alias=AliasChoices('as_of', 'asOf'),
+    )
 
 
 class MarketSections(BaseModel):
@@ -24,6 +29,19 @@ class MarketSections(BaseModel):
     crypto: list[MarketPoint] = Field(default_factory=list)
 
 
+class MarketSectionMeta(BaseModel):
+    source: str | None = None
+    sources: list[str] = Field(default_factory=list)
+    as_of: datetime | None = Field(
+        default=None,
+        serialization_alias='asOf',
+        validation_alias=AliasChoices('as_of', 'asOf'),
+    )
+    loaded: int = 0
+    expected: int = 0
+    stale: bool = False
+
+
 class MarketOverviewResponse(BaseModel):
     as_of: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
@@ -31,5 +49,11 @@ class MarketOverviewResponse(BaseModel):
         validation_alias=AliasChoices('as_of', 'asOf'),
     )
     degraded: bool = False
+    banner: str | None = None
     warnings: list[str] = Field(default_factory=list)
     sections: MarketSections
+    section_meta: dict[str, MarketSectionMeta] = Field(
+        default_factory=dict,
+        serialization_alias='sectionMeta',
+        validation_alias=AliasChoices('section_meta', 'sectionMeta'),
+    )

@@ -18,7 +18,15 @@ class Settings(BaseSettings):
 
     market_cache_ttl_seconds: int = 20
     market_stale_ttl_seconds: int = 300
+    market_lkg_ttl_seconds: int = 60 * 60 * 24 * 7
     market_ws_interval_seconds: int = 10
+    market_bootstrap_enabled: bool = True
+    market_rates_defaults_enabled: bool = True
+
+    provider_failure_threshold: int = 3
+    provider_cooldown_seconds: int = 180
+    yahoo_failure_threshold: int = 2
+    yahoo_cooldown_seconds: int = 300
 
     yahoo_timeout_seconds: float = 8.0
     yahoo_max_retries: int = 2
@@ -37,6 +45,9 @@ class Settings(BaseSettings):
 
     stooq_timeout_seconds: float = 8.0
     stooq_rate_limit_per_minute: int = 30
+
+    fx_timeout_seconds: float = 8.0
+    fx_rate_limit_per_minute: int = 30
 
     coingecko_timeout_seconds: float = 8.0
     coingecko_rate_limit_per_minute: int = 20
