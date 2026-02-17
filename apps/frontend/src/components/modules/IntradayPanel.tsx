@@ -145,7 +145,7 @@ export function IntradayPanel({ panelId, initialSymbol }: IntradayPanelProps) {
     setCommandFeedback(`INTRA ${normalized}`);
   };
 
-  const points = data?.points ?? [];
+  const points = useMemo(() => data?.points ?? [], [data?.points]);
   const lastTick = points.length > 0 ? points[points.length - 1] : undefined;
 
   const latestRows = useMemo(() => {
