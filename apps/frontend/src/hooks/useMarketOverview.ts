@@ -2,15 +2,15 @@
 
 import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { fetchMarketOverview, MarketOverviewResponse } from '@/lib/api';
+import { fetchMarketOverview, MarketOverviewResponse, WS_OVERVIEW_ENDPOINT } from '@/lib/api';
 
 const QUERY_KEY = ['market-overview'];
 
 const WS_ENDPOINT =
-  process.env.NEXT_PUBLIC_WS_BASE_URL ??
+  WS_OVERVIEW_ENDPOINT ??
   (typeof window !== 'undefined'
     ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/market/overview`
-    : 'ws://localhost/ws/market/overview');
+    : 'ws://localhost:8000/ws/market/overview');
 
 export function useMarketOverview(refreshIntervalMs: number) {
   const queryClient = useQueryClient();

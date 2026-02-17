@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
 
+# Ensure local package imports (app.*) work during alembic/uvicorn startup
+export PYTHONPATH="/app:${PYTHONPATH:-}"
+
 MAX_RETRIES="${DB_MIGRATION_MAX_RETRIES:-30}"
 RETRY_DELAY_SECONDS="${DB_MIGRATION_RETRY_DELAY_SECONDS:-2}"
 
@@ -22,5 +25,7 @@ while [ "$attempt" -le "$MAX_RETRIES" ]; do
   attempt=$((attempt + 1))
 done
 
-echo "[backend] starting API"
-exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+PORT_VALUE="${PORT:-8000}"
+
+echo "[backend] starting API on port ${PORT_VALUE}"
+exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT_VALUE}"

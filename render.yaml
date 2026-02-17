@@ -1,0 +1,62 @@
+services:
+  - type: web
+    name: openbloom-backend
+    runtime: python
+    plan: free
+    region: oregon
+    rootDir: apps/backend
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: sh start.sh
+    healthCheckPath: /api/v1/health/ready
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      - key: CORS_ORIGINS
+        value: '["http://localhost:3000","http://localhost"]'
+      - key: CORS_ORIGIN_REGEX
+        value: ^https://.*\.onrender\.com$
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: DB_MIGRATION_MAX_RETRIES
+        value: "40"
+      - key: DB_MIGRATION_RETRY_DELAY_SECONDS
+        value: "3"
+      - key: MARKET_CACHE_TTL_SECONDS
+        value: "2"
+      - key: MARKET_UPSTREAM_REFRESH_SECONDS
+        value: "8"
+      - key: MARKET_WS_INTERVAL_SECONDS
+        value: "2"
+      - key: FRED_API_KEY
+        sync: false
+
+  - type: web
+    name: openbloom-frontend
+    runtime: node
+    plan: free
+    region: oregon
+    rootDir: apps/frontend
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: 22.12.0
+      - key: NEXT_PUBLIC_API_BASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_API_TIMEOUT_MS
+        value: "10000"
+      - key: NEXT_PUBLIC_MMAP_REFRESH_INTERVAL_MS
+        value: "2000"
+      - key: NEXT_PUBLIC_INTRADAY_REFRESH_INTERVAL_MS
+        value: "2000"
+      - key: NEXT_PUBLIC_WATCHLIST_REFRESH_INTERVAL_MS
+        value: "2000"
+      - key: NEXT_PUBLIC_ALERTS_POLL_INTERVAL_MS
+        value: "2000"

@@ -58,6 +58,8 @@ export interface IntradayResponse {
   currency?: string;
   stale: boolean;
   freshnessSeconds?: number;
+  sourceRefreshIntervalSeconds?: number;
+  upstreamRefreshIntervalSeconds?: number;
   warnings: string[];
   points: IntradayPoint[];
 }
@@ -171,7 +173,47 @@ export interface UpdatePriceAlertPayload {
   source?: 'manual' | 'watchlist' | 'command' | 'system';
 }
 
-const BACKEND_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, '');
+}
+
+function normalizeConfiguredUrl(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  return trimTrailingSlash(trimmed);
+}
+
+function toWebSocketOrigin(httpUrl: string): string {
+  return httpUrl.replace(/^https:/i, 'wss:').replace(/^http:/i, 'ws:');
+}
+
+function toIntradayWsBase(overviewEndpoint: string): string {
+  const normalized = trimTrailingSlash(overviewEndpoint);
+  if (/\/ws\/market\/overview$/i.test(normalized)) {
+    return normalized.replace(/\/ws\/market\/overview$/i, '/ws/market/intraday');
+  }
+  return `${normalized}/ws/market/intraday`;
+}
+
+export const BACKEND_BASE = normalizeConfiguredUrl(process.env.NEXT_PUBLIC_API_BASE_URL) ?? '';
+
+const CONFIGURED_WS_OVERVIEW = normalizeConfiguredUrl(process.env.NEXT_PUBLIC_WS_BASE_URL);
+const CONFIGURED_INTRADAY_WS_BASE = normalizeConfiguredUrl(process.env.NEXT_PUBLIC_INTRADAY_WS_BASE_URL);
+
+export const WS_OVERVIEW_ENDPOINT =
+  CONFIGURED_WS_OVERVIEW ?? (BACKEND_BASE ? `${toWebSocketOrigin(BACKEND_BASE)}/ws/market/overview` : undefined);
+
+export const WS_INTRADAY_BASE_ENDPOINT =
+  CONFIGURED_INTRADAY_WS_BASE ??
+  (WS_OVERVIEW_ENDPOINT ? toIntradayWsBase(WS_OVERVIEW_ENDPOINT) : BACKEND_BASE ? `${toWebSocketOrigin(BACKEND_BASE)}/ws/market/intraday` : undefined);
+
 const REQUEST_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_API_TIMEOUT_MS ?? 10000);
 
 async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
@@ -239,8 +281,18 @@ export async function fetchMarketOverview(): Promise<MarketOverviewResponse> {
   return readJson<MarketOverviewResponse>(response);
 }
 
+function normalizeIntradaySymbolForPath(symbol: string): string {
+  const raw = (symbol ?? '').trim().toUpperCase();
+  const slashFx = raw.match(/^([A-Z]{3})\s*\/\s*([A-Z]{3})$/);
+  if (slashFx) {
+    return `${slashFx[1]}${slashFx[2]}`;
+  }
+  return raw.replace(/\s+/g, '');
+}
+
 export async function fetchIntraday(symbol: string): Promise<IntradayResponse> {
-  const response = await fetchWithTimeout(`${BACKEND_BASE}/api/v1/market/intraday/${encodeURIComponent(symbol)}`, {
+  const transportSymbol = normalizeIntradaySymbolForPath(symbol);
+  const response = await fetchWithTimeout(`${BACKEND_BASE}/api/v1/market/intraday/${encodeURIComponent(transportSymbol)}`, {
     headers: {
       Accept: 'application/json'
     },

@@ -1,6 +1,7 @@
+import json
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,7 +12,9 @@ class Settings(BaseSettings):
     app_env: str = 'development'
     app_debug: bool = False
 
-    cors_origins: list[str] = Field(default_factory=lambda: ['http://localhost:3000'])
+    frontend_public_url: str | None = None
+    cors_origins: list[str] = Field(default_factory=lambda: ['http://localhost:3000', 'http://localhost'])
+    cors_origin_regex: str | None = r'^https://.*\.onrender\.com$'
 
     database_url: str = 'postgresql+asyncpg://postgres:postgres@postgres:5432/openbloom'
     redis_url: str = 'redis://redis:6379/0'
@@ -20,6 +23,8 @@ class Settings(BaseSettings):
     market_cache_ttl_seconds: int = 2
     # Upstream fetch cadence: throttled to protect free providers.
     market_upstream_refresh_seconds: int = 8
+    # FX symbols can refresh a bit faster without changing global upstream cadence.
+    market_fx_upstream_refresh_seconds: int = 4
     market_stale_ttl_seconds: int = 300
     market_lkg_ttl_seconds: int = 60 * 60 * 24 * 7
     market_ws_interval_seconds: int = 2
@@ -72,6 +77,67 @@ class Settings(BaseSettings):
     polygon_api_key: str | None = None
     news_api_key: str | None = None
     sec_user_agent: str = 'openbloom/0.1 (support@local)'
+
+    @field_validator('cors_origins', mode='before')
+    @classmethod
+    def parse_cors_origins(cls, value: object) -> object:
+        if value is None:
+            return []
+
+        if isinstance(value, str):
+            raw = value.strip()
+            if not raw:
+                return []
+
+            if raw.startswith('['):
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, list):
+                        return parsed
+                except json.JSONDecodeError:
+                    pass
+
+            return [origin.strip() for origin in raw.split(',') if origin.strip()]
+
+        return value
+
+    @field_validator('database_url', mode='before')
+    @classmethod
+    def normalize_database_url(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+
+        url = value.strip()
+        if url.startswith('postgres://'):
+            url = f"postgresql://{url[len('postgres://') :]}"
+
+        if url.startswith('postgresql+asyncpg://'):
+            return url
+
+        if url.startswith('postgresql://'):
+            return f"postgresql+asyncpg://{url[len('postgresql://') :]}"
+
+        if url.startswith('postgresql+'):
+            _, tail = url.split('://', 1)
+            return f'postgresql+asyncpg://{tail}'
+
+        return url
+
+    @model_validator(mode='after')
+    def apply_origin_defaults(self) -> 'Settings':
+        origins = list(self.cors_origins)
+
+        if self.frontend_public_url:
+            origins.append(self.frontend_public_url)
+
+        deduped: list[str] = []
+        for origin in origins:
+            normalized = origin.strip().rstrip('/')
+            if normalized and normalized not in deduped:
+                deduped.append(normalized)
+
+        self.cors_origins = deduped
+        return self
 
 
 @lru_cache(maxsize=1)
