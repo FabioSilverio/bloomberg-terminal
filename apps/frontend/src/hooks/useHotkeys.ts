@@ -2,11 +2,11 @@
 
 import { useEffect } from 'react';
 
-import { ModuleCode } from '@/lib/modules';
+import { CommandContext, ModuleCode } from '@/lib/modules';
 
 interface UseHotkeysArgs {
   focusCommandBar: () => void;
-  openModule: (code: ModuleCode) => void;
+  openModule: (code: ModuleCode, context?: CommandContext) => void;
 }
 
 export function useHotkeys({ focusCommandBar, openModule }: UseHotkeysArgs) {
@@ -20,6 +20,16 @@ export function useHotkeys({ focusCommandBar, openModule }: UseHotkeysArgs) {
       if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'm') {
         event.preventDefault();
         openModule('MMAP');
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'i') {
+        event.preventDefault();
+        openModule('INTRA', { symbol: 'AAPL' });
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'w') {
+        event.preventDefault();
+        openModule('WL');
       }
     };
 

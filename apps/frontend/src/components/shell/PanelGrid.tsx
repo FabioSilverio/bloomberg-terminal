@@ -48,7 +48,7 @@ export function PanelGrid() {
         {panels.map((panel) => (
           <div key={panel.id}>
             <ModulePanel title={panel.title} moduleCode={panel.module}>
-              <ModuleRenderer module={panel.module} />
+              <ModuleRenderer panel={panel} />
             </ModulePanel>
           </div>
         ))}

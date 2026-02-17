@@ -12,13 +12,13 @@ const WS_ENDPOINT =
     ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/market/overview`
     : 'ws://localhost/ws/market/overview');
 
-export function useMarketOverview() {
+export function useMarketOverview(refreshIntervalMs: number) {
   const queryClient = useQueryClient();
 
   const query = useQuery({
     queryKey: QUERY_KEY,
     queryFn: fetchMarketOverview,
-    refetchInterval: 30_000
+    refetchInterval: Math.max(500, refreshIntervalMs)
   });
 
   useEffect(() => {

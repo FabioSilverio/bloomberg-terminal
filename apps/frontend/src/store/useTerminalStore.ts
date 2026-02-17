@@ -1,25 +1,34 @@
 import { create } from 'zustand';
 import { Layout } from 'react-grid-layout';
-import { ModuleCode } from '@/lib/modules';
+import { CommandContext, ModuleCode, normalizeSymbolToken } from '@/lib/modules';
 
 export interface PanelConfig {
   id: string;
   module: ModuleCode;
   title: string;
+  context?: CommandContext;
 }
 
 interface TerminalState {
   panels: PanelConfig[];
   layout: Layout[];
   commandFeedback: string;
+  mmapRefreshMs: number;
   setLayout: (layout: Layout[]) => void;
-  openModule: (module: ModuleCode) => void;
+  openModule: (module: ModuleCode, context?: CommandContext) => void;
   focusPanel: (panelId: string) => void;
+  setPanelContext: (panelId: string, context: CommandContext) => void;
   setCommandFeedback: (feedback: string) => void;
+  setMmapRefreshMs: (value: number) => void;
 }
+
+const DEFAULT_MMAP_REFRESH_MS = Number(process.env.NEXT_PUBLIC_MMAP_REFRESH_INTERVAL_MS ?? 2000);
 
 const MODULE_TITLES: Record<ModuleCode, string> = {
   MMAP: 'Market Overview',
+  INTRA: 'Intraday Realtime',
+  EQRT: 'Intraday Realtime',
+  WL: 'Watchlist',
   EQ: 'Equities',
   ECOF: 'Economic Forecasts',
   NEWS: 'News Monitor',
@@ -33,6 +42,14 @@ const MODULE_TITLES: Record<ModuleCode, string> = {
   CRYPTO: 'Crypto Monitor',
   MSG: 'Messaging'
 };
+
+function buildPanelTitle(module: ModuleCode, context?: CommandContext): string {
+  if ((module === 'INTRA' || module === 'EQRT') && context?.symbol) {
+    return `Intraday ${context.symbol}`;
+  }
+
+  return MODULE_TITLES[module];
+}
 
 const INITIAL_PANELS: PanelConfig[] = [
   {
@@ -57,9 +74,11 @@ const INITIAL_LAYOUT: Layout[] = [
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   panels: INITIAL_PANELS,
   layout: INITIAL_LAYOUT,
-  commandFeedback: 'Type a function code (MMAP, EQ, NEWS...) and press Enter',
+  mmapRefreshMs: Number.isFinite(DEFAULT_MMAP_REFRESH_MS) ? Math.max(500, DEFAULT_MMAP_REFRESH_MS) : 2000,
+  commandFeedback: 'Try: MMAP | INTRA AAPL | WL | WL ADD EURUSD',
   setLayout: (layout) => set({ layout }),
   setCommandFeedback: (commandFeedback) => set({ commandFeedback }),
+  setMmapRefreshMs: (value) => set({ mmapRefreshMs: Math.max(500, Math.round(value)) }),
   focusPanel: (panelId) => {
     const layout = get().layout;
     const selected = layout.find((item) => item.i === panelId);
@@ -77,31 +96,74 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
     set({ layout: reordered });
   },
-  openModule: (module) => {
+  setPanelContext: (panelId, context) => {
+    const symbol = context.symbol ? normalizeSymbolToken(context.symbol) : undefined;
+
+    set((state) => ({
+      panels: state.panels.map((panel) => {
+        if (panel.id !== panelId) {
+          return panel;
+        }
+
+        const nextContext: CommandContext = {
+          ...panel.context,
+          ...context,
+          ...(symbol ? { symbol } : {})
+        };
+
+        return {
+          ...panel,
+          context: nextContext,
+          title: buildPanelTitle(panel.module, nextContext)
+        };
+      })
+    }));
+  },
+  openModule: (module, context) => {
+    const normalizedModule = module === 'EQRT' ? 'INTRA' : module;
     const { panels, layout } = get();
-    const existing = panels.find((panel) => panel.module === module);
+
+    let normalizedContext = context;
+    if (normalizedModule === 'INTRA') {
+      normalizedContext = {
+        ...context,
+        symbol: normalizeSymbolToken(context?.symbol ?? 'AAPL') || 'AAPL'
+      };
+    }
+
+    const existing = panels.find((panel) => {
+      if (normalizedModule === 'INTRA') {
+        return panel.module === 'INTRA' && panel.context?.symbol === normalizedContext?.symbol;
+      }
+
+      return panel.module === normalizedModule;
+    });
 
     if (existing) {
       set({
-        commandFeedback: `${module} already open in panel ${existing.id.toUpperCase()}`
+        commandFeedback:
+          normalizedModule === 'INTRA' && normalizedContext?.symbol
+            ? `INTRA ${normalizedContext.symbol} already open`
+            : `${normalizedModule} already open`
       });
       return;
     }
 
-    const nextId = `${module.toLowerCase()}-${Date.now().toString(36)}`;
+    const nextId = `${normalizedModule.toLowerCase()}-${Date.now().toString(36)}`;
     const panelCount = panels.length;
     const nextPanel: PanelConfig = {
       id: nextId,
-      module,
-      title: MODULE_TITLES[module]
+      module: normalizedModule,
+      title: buildPanelTitle(normalizedModule, normalizedContext),
+      context: normalizedContext
     };
 
     const nextLayout: Layout = {
       i: nextId,
       x: (panelCount * 3) % 12,
       y: Infinity,
-      w: 6,
-      h: 10,
+      w: normalizedModule === 'WL' ? 5 : 6,
+      h: normalizedModule === 'WL' ? 12 : 10,
       minW: 3,
       minH: 8
     };
@@ -109,7 +171,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     set({
       panels: [...panels, nextPanel],
       layout: [...layout, nextLayout],
-      commandFeedback: `Opened ${module} in a new panel`
+      commandFeedback:
+        normalizedModule === 'INTRA' && normalizedContext?.symbol
+          ? `Opened INTRA ${normalizedContext.symbol}`
+          : `Opened ${normalizedModule} in a new panel`
     });
   }
 }));
