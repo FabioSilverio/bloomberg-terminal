@@ -4,7 +4,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
-from app.api.routes.market import stream_market_overview
+from app.api.routes.market import stream_intraday, stream_market_overview
 from app.core.config import get_settings
 from app.core.container import get_container
 from app.core.logging import configure_logging
@@ -35,6 +35,11 @@ app.add_middleware(
 @app.websocket('/ws/market/overview')
 async def market_overview_socket(websocket: WebSocket):
     await stream_market_overview(websocket)
+
+
+@app.websocket('/ws/market/intraday/{symbol}')
+async def market_intraday_socket(websocket: WebSocket, symbol: str):
+    await stream_intraday(websocket, symbol)
 
 
 @app.get('/')

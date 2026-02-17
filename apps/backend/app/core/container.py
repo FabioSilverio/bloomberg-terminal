@@ -4,6 +4,8 @@ from app.core.config import get_settings
 from app.services.cache import CacheClient
 from app.services.http_client import HttpClient
 from app.services.market_overview import MarketOverviewService
+from app.services.realtime_market import RealtimeMarketService
+from app.services.watchlist import WatchlistService
 
 
 class ServiceContainer:
@@ -15,6 +17,15 @@ class ServiceContainer:
             settings=self.settings,
             cache=self.cache,
             http_client=self.http_client,
+        )
+        self.realtime_market = RealtimeMarketService(
+            settings=self.settings,
+            cache=self.cache,
+            http_client=self.http_client,
+        )
+        self.watchlist = WatchlistService(
+            settings=self.settings,
+            realtime_market=self.realtime_market,
         )
 
     async def shutdown(self) -> None:

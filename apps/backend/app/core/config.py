@@ -16,10 +16,13 @@ class Settings(BaseSettings):
     database_url: str = 'postgresql+asyncpg://postgres:postgres@postgres:5432/openbloom'
     redis_url: str = 'redis://redis:6379/0'
 
-    market_cache_ttl_seconds: int = 20
+    # UI/API cadence: frequent refresh to keep terminal feeling live.
+    market_cache_ttl_seconds: int = 2
+    # Upstream fetch cadence: throttled to protect free providers.
+    market_upstream_refresh_seconds: int = 8
     market_stale_ttl_seconds: int = 300
     market_lkg_ttl_seconds: int = 60 * 60 * 24 * 7
-    market_ws_interval_seconds: int = 10
+    market_ws_interval_seconds: int = 2
     market_bootstrap_enabled: bool = True
     market_rates_defaults_enabled: bool = True
 
@@ -56,6 +59,10 @@ class Settings(BaseSettings):
     fred_timeout_seconds: float = 8.0
     fred_public_timeout_seconds: float = 8.0
     fred_rate_limit_per_minute: int = 30
+
+    # Intraday / watchlist tuning
+    intraday_rate_limit_per_minute: int = 40
+    watchlist_max_items: int = 40
 
     alpha_vantage_api_key: str | None = None
     finnhub_api_key: str | None = None

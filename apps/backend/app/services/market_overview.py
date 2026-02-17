@@ -188,6 +188,7 @@ class MarketOverviewService:
         self.fred_limiter = AsyncRateLimiter(max_calls=settings.fred_rate_limit_per_minute, period_seconds=60)
 
         self._provider_lock = asyncio.Lock()
+        self._overview_refresh_lock = asyncio.Lock()
         self._provider_status: dict[str, dict[str, Any]] = {
             'yahoo': self._new_provider_state(),
             'stooq': self._new_provider_state(),
@@ -205,11 +206,78 @@ class MarketOverviewService:
     async def get_overview(self) -> MarketOverviewResponse:
         fresh_key = 'market:overview:fresh'
         stale_key = 'market:overview:stale'
+        upstream_key = 'market:overview:upstream'
 
         cached_fresh = await self.cache.get(fresh_key)
         if cached_fresh is not None:
             return MarketOverviewResponse.model_validate(cached_fresh)
 
+        upstream_response, upstream_fetched_at = await self._load_upstream_snapshot(upstream_key)
+        if not self._should_refresh_live(upstream_response, upstream_fetched_at):
+            return await self._serve_upstream_snapshot(fresh_key, upstream_response)
+
+        async with self._overview_refresh_lock:
+            cached_fresh = await self.cache.get(fresh_key)
+            if cached_fresh is not None:
+                return MarketOverviewResponse.model_validate(cached_fresh)
+
+            upstream_response, upstream_fetched_at = await self._load_upstream_snapshot(upstream_key)
+            if not self._should_refresh_live(upstream_response, upstream_fetched_at):
+                return await self._serve_upstream_snapshot(fresh_key, upstream_response)
+
+            return await self._refresh_overview(fresh_key=fresh_key, stale_key=stale_key, upstream_key=upstream_key)
+
+    async def _load_upstream_snapshot(
+        self,
+        upstream_key: str,
+    ) -> tuple[MarketOverviewResponse | None, datetime | None]:
+        upstream_payload = await self.cache.get(upstream_key)
+        if not isinstance(upstream_payload, dict):
+            return None, None
+
+        upstream_response: MarketOverviewResponse | None = None
+
+        payload_raw = upstream_payload.get('payload')
+        if payload_raw is not None:
+            try:
+                upstream_response = MarketOverviewResponse.model_validate(payload_raw)
+            except Exception:
+                upstream_response = None
+
+        upstream_fetched_at = self._parse_dt(upstream_payload.get('fetchedAt'))
+        return upstream_response, upstream_fetched_at
+
+    def _should_refresh_live(
+        self,
+        upstream_response: MarketOverviewResponse | None,
+        upstream_fetched_at: datetime | None,
+    ) -> bool:
+        now = datetime.now(timezone.utc)
+        return (
+            upstream_response is None
+            or upstream_fetched_at is None
+            or (now - upstream_fetched_at).total_seconds() >= self.settings.market_upstream_refresh_seconds
+        )
+
+    async def _serve_upstream_snapshot(
+        self,
+        fresh_key: str,
+        upstream_response: MarketOverviewResponse | None,
+    ) -> MarketOverviewResponse:
+        if upstream_response is None:
+            raise RuntimeError('upstream response is missing')
+
+        serialized = upstream_response.model_dump(mode='json', by_alias=True)
+        await self.cache.set(fresh_key, serialized, ttl_seconds=self.settings.market_cache_ttl_seconds)
+        return upstream_response
+
+    async def _refresh_overview(
+        self,
+        *,
+        fresh_key: str,
+        stale_key: str,
+        upstream_key: str,
+    ) -> MarketOverviewResponse:
         provider_payload_cache: dict[str, dict[SectionName, list[MarketPoint]] | None] = {}
 
         async def provider_payload(provider: ProviderName) -> dict[SectionName, list[MarketPoint]] | None:
@@ -300,6 +368,14 @@ class MarketOverviewService:
         serialized = response.model_dump(mode='json', by_alias=True)
         await self.cache.set(fresh_key, serialized, ttl_seconds=self.settings.market_cache_ttl_seconds)
         await self.cache.set(stale_key, serialized, ttl_seconds=self.settings.market_stale_ttl_seconds)
+        await self.cache.set(
+            upstream_key,
+            {
+                'fetchedAt': datetime.now(timezone.utc).isoformat(),
+                'payload': serialized,
+            },
+            ttl_seconds=self.settings.market_stale_ttl_seconds,
+        )
 
         return response
 
@@ -1127,3 +1203,4 @@ class MarketOverviewService:
 
         message = str(exc).strip()
         return message[:180] if message else exc.__class__.__name__
+
