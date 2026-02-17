@@ -38,6 +38,8 @@ export function useIntraday(symbol: string) {
   const query = useQuery({
     queryKey: ['intraday', symbol],
     queryFn: () => fetchIntraday(symbol),
+    retry: 1,
+    refetchOnWindowFocus: false,
     refetchInterval: Math.max(500, Number.isFinite(DEFAULT_REFRESH_MS) ? DEFAULT_REFRESH_MS : 2000)
   });
 

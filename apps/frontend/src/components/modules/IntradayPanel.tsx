@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import React, { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { useQuery } from '@tanstack/react-query';
 import { ColorType, IChartApi, ISeriesApi, LineData, UTCTimestamp, createChart } from 'lightweight-charts';
@@ -22,66 +22,95 @@ function formatNumber(value: number | undefined): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
+function toLineSeriesData(points: IntradayPoint[]): LineData[] {
+  const byTime = new Map<number, number>();
+
+  for (const point of points) {
+    const time = Math.floor(new Date(point.time).getTime() / 1000);
+    if (!Number.isFinite(time) || !Number.isFinite(point.price)) {
+      continue;
+    }
+
+    byTime.set(time, point.price);
+  }
+
+  return [...byTime.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([time, value]) => ({
+      time: time as UTCTimestamp,
+      value
+    }));
+}
+
 function IntradayChart({ points }: { points: IntradayPoint[] }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const [chartError, setChartError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) {
       return;
     }
 
-    const chart = createChart(containerRef.current, {
-      width: containerRef.current.clientWidth,
-      height: 250,
-      layout: {
-        textColor: '#b8c7db',
-        background: { type: ColorType.Solid, color: '#09111b' }
-      },
-      grid: {
-        vertLines: { color: '#1a2434' },
-        horzLines: { color: '#1a2434' }
-      },
-      timeScale: {
-        borderColor: '#263347',
-        timeVisible: true,
-        secondsVisible: false
-      },
-      rightPriceScale: {
-        borderColor: '#263347'
-      },
-      crosshair: {
-        vertLine: { color: '#415976' },
-        horzLine: { color: '#415976' }
-      }
-    });
+    let chart: IChartApi | null = null;
+    let observer: ResizeObserver | null = null;
 
-    const series = chart.addLineSeries({
-      color: '#ff9a2f',
-      lineWidth: 2,
-      priceLineVisible: false
-    });
-
-    chartRef.current = chart;
-    seriesRef.current = series;
-
-    const observer = new ResizeObserver(() => {
-      if (!containerRef.current || !chartRef.current) {
-        return;
-      }
-
-      chartRef.current.applyOptions({
+    try {
+      chart = createChart(containerRef.current, {
         width: containerRef.current.clientWidth,
-        height: Math.max(190, containerRef.current.clientHeight)
+        height: 250,
+        layout: {
+          textColor: '#b8c7db',
+          background: { type: ColorType.Solid, color: '#09111b' }
+        },
+        grid: {
+          vertLines: { color: '#1a2434' },
+          horzLines: { color: '#1a2434' }
+        },
+        timeScale: {
+          borderColor: '#263347',
+          timeVisible: true,
+          secondsVisible: false
+        },
+        rightPriceScale: {
+          borderColor: '#263347'
+        },
+        crosshair: {
+          vertLine: { color: '#415976' },
+          horzLine: { color: '#415976' }
+        }
       });
-    });
 
-    observer.observe(containerRef.current);
+      const series = chart.addLineSeries({
+        color: '#ff9a2f',
+        lineWidth: 2,
+        priceLineVisible: false
+      });
+
+      chartRef.current = chart;
+      seriesRef.current = series;
+      setChartError(null);
+
+      observer = new ResizeObserver(() => {
+        if (!containerRef.current || !chartRef.current) {
+          return;
+        }
+
+        chartRef.current.applyOptions({
+          width: containerRef.current.clientWidth,
+          height: Math.max(190, containerRef.current.clientHeight)
+        });
+      });
+
+      observer.observe(containerRef.current);
+    } catch (error) {
+      setChartError(error instanceof Error ? error.message : 'Chart initialization error');
+    }
 
     return () => {
-      observer.disconnect();
-      chart.remove();
+      observer?.disconnect();
+      chart?.remove();
       chartRef.current = null;
       seriesRef.current = null;
     };
@@ -92,27 +121,32 @@ function IntradayChart({ points }: { points: IntradayPoint[] }) {
       return;
     }
 
-    const data: LineData[] = points
-      .map((point) => ({
-        time: Math.floor(new Date(point.time).getTime() / 1000) as UTCTimestamp,
-        value: point.price
-      }))
-      .filter((point) => Number.isFinite(point.time) && Number.isFinite(point.value));
+    const data = toLineSeriesData(points);
 
-    seriesRef.current.setData(data);
-
-    if (data.length > 1) {
-      chartRef.current?.timeScale().fitContent();
+    try {
+      seriesRef.current.setData(data);
+      if (data.length > 1) {
+        chartRef.current?.timeScale().fitContent();
+      }
+      setChartError(null);
+    } catch (error) {
+      setChartError(error instanceof Error ? error.message : 'Chart update error');
     }
   }, [points]);
 
-  return <div ref={containerRef} className="h-[250px] w-full border border-terminal-line bg-[#09111b]" />;
+  return (
+    <div className="space-y-1">
+      {chartError && <div className="text-[10px] text-terminal-down">Chart fallback active: {chartError}</div>}
+      <div ref={containerRef} className="h-[250px] w-full border border-terminal-line bg-[#09111b]" />
+    </div>
+  );
 }
 
 export function IntradayPanel({ panelId, initialSymbol }: IntradayPanelProps) {
   const normalizedInitial = normalizeSymbolToken(initialSymbol) || 'AAPL';
   const [symbolInput, setSymbolInput] = useState(normalizedInitial);
   const [activeSymbol, setActiveSymbol] = useState(normalizedInitial);
+  const [loadingSince, setLoadingSince] = useState<number | null>(null);
 
   const setPanelContext = useTerminalStore((state) => state.setPanelContext);
   const setCommandFeedback = useTerminalStore((state) => state.setCommandFeedback);
@@ -129,6 +163,15 @@ export function IntradayPanel({ panelId, initialSymbol }: IntradayPanelProps) {
     setSymbolInput(normalized);
     setActiveSymbol(normalized);
   }, [initialSymbol]);
+
+  useEffect(() => {
+    if (isLoading) {
+      setLoadingSince((current) => current ?? Date.now());
+      return;
+    }
+
+    setLoadingSince(null);
+  }, [isLoading]);
 
   const onSubmitSymbol = (event: FormEvent) => {
     event.preventDefault();
@@ -156,6 +199,8 @@ export function IntradayPanel({ panelId, initialSymbol }: IntradayPanelProps) {
     return points.slice(-6).reverse();
   }, [points]);
 
+  const loadingTooLong = loadingSince !== null && Date.now() - loadingSince > 7000;
+
   return (
     <div className="flex h-full flex-col bg-terminal-panel">
       <form onSubmit={onSubmitSymbol} className="flex items-center gap-2 border-b border-terminal-line px-2 py-1">
@@ -172,6 +217,8 @@ export function IntradayPanel({ panelId, initialSymbol }: IntradayPanelProps) {
         >
           Load
         </button>
+
+        <span className="text-[10px] text-terminal-muted">Examples: USD/BRL, USDBRL, BRLUSD, AAPL, BTCUSD</span>
 
         <div className="ml-auto flex items-center gap-2 text-[10px] uppercase tracking-wide">
           <span className="text-terminal-muted">{data ? `As of ${new Date(data.asOf).toLocaleTimeString()}` : 'Waiting...'}</span>
@@ -205,7 +252,12 @@ export function IntradayPanel({ panelId, initialSymbol }: IntradayPanelProps) {
         </div>
       )}
 
-      {isLoading && <div className="p-3 text-sm text-terminal-muted">Loading intraday feed...</div>}
+      {isLoading && (
+        <div className="space-y-1 p-3 text-sm text-terminal-muted">
+          <div>Loading intraday feed...</div>
+          {loadingTooLong && <div className="text-[11px] text-[#d5b98a]">Still loading. If this persists, try another symbol.</div>}
+        </div>
+      )}
 
       {isError && (
         <div className="p-3 text-sm text-terminal-down">

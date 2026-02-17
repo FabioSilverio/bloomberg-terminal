@@ -174,7 +174,7 @@ export function CommandBar({ inputRef, onOpenModule, onSetMmapRefresh, onFeedbac
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={onInputKeyDown}
         className="h-7 flex-1 border border-[#233044] bg-[#05080d] px-2 text-sm text-[#d7e2f0] outline-none ring-terminal-accent focus:ring-1"
-        placeholder="MMAP | INTRA AAPL | WL ADD EURUSD | ALRT ADD AAPL ABOVE 200"
+        placeholder="MMAP | INTRA USD/BRL | WL ADD USD/BRL | ALRT ADD AAPL ABOVE 200"
         spellCheck={false}
       />
       <div className="text-[11px] text-terminal-muted">

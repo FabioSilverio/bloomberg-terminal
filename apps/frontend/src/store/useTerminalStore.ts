@@ -93,7 +93,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   densityMode: 'compact',
   mmapRefreshMs: Number.isFinite(DEFAULT_MMAP_REFRESH_MS) ? Math.max(500, DEFAULT_MMAP_REFRESH_MS) : 2000,
   alertSoundEnabled: true,
-  commandFeedback: 'Try: MMAP | INTRA AAPL | WL ADD EURUSD | ALRT ADD AAPL ABOVE 200',
+  commandFeedback: 'Try: MMAP | INTRA USD/BRL | WL ADD USD/BRL | ALRT ADD AAPL ABOVE 200',
   setLayout: (layout) => set({ layout }),
   setCommandFeedback: (commandFeedback) => set({ commandFeedback }),
   setMmapRefreshMs: (value) => set({ mmapRefreshMs: Math.max(500, Math.round(value)) }),

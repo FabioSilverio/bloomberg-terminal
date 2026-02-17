@@ -172,6 +172,24 @@ export interface UpdatePriceAlertPayload {
 }
 
 const BACKEND_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
+const REQUEST_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_API_TIMEOUT_MS ?? 10000);
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const timeoutMs = Number.isFinite(REQUEST_TIMEOUT_MS) ? Math.max(2000, REQUEST_TIMEOUT_MS) : 10000;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 async function readJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -211,7 +229,7 @@ async function ensureNoContent(response: Response, fallbackMessage: string): Pro
 }
 
 export async function fetchMarketOverview(): Promise<MarketOverviewResponse> {
-  const response = await fetch(`${BACKEND_BASE}/api/v1/market/overview`, {
+  const response = await fetchWithTimeout(`${BACKEND_BASE}/api/v1/market/overview`, {
     headers: {
       Accept: 'application/json'
     },
@@ -222,7 +240,7 @@ export async function fetchMarketOverview(): Promise<MarketOverviewResponse> {
 }
 
 export async function fetchIntraday(symbol: string): Promise<IntradayResponse> {
-  const response = await fetch(`${BACKEND_BASE}/api/v1/market/intraday/${encodeURIComponent(symbol)}`, {
+  const response = await fetchWithTimeout(`${BACKEND_BASE}/api/v1/market/intraday/${encodeURIComponent(symbol)}`, {
     headers: {
       Accept: 'application/json'
     },
@@ -233,7 +251,7 @@ export async function fetchIntraday(symbol: string): Promise<IntradayResponse> {
 }
 
 export async function fetchWatchlist(): Promise<WatchlistResponse> {
-  const response = await fetch(`${BACKEND_BASE}/api/v1/watchlist`, {
+  const response = await fetchWithTimeout(`${BACKEND_BASE}/api/v1/watchlist`, {
     headers: {
       Accept: 'application/json'
     },
@@ -244,7 +262,7 @@ export async function fetchWatchlist(): Promise<WatchlistResponse> {
 }
 
 export async function addWatchlistSymbol(symbol: string): Promise<WatchlistItem> {
-  const response = await fetch(`${BACKEND_BASE}/api/v1/watchlist`, {
+  const response = await fetchWithTimeout(`${BACKEND_BASE}/api/v1/watchlist`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -257,7 +275,7 @@ export async function addWatchlistSymbol(symbol: string): Promise<WatchlistItem>
 }
 
 export async function removeWatchlistItem(itemId: number): Promise<void> {
-  const response = await fetch(`${BACKEND_BASE}/api/v1/watchlist/${itemId}`, {
+  const response = await fetchWithTimeout(`${BACKEND_BASE}/api/v1/watchlist/${itemId}`, {
     method: 'DELETE'
   });
 
@@ -265,7 +283,7 @@ export async function removeWatchlistItem(itemId: number): Promise<void> {
 }
 
 export async function removeWatchlistSymbol(symbol: string): Promise<void> {
-  const response = await fetch(`${BACKEND_BASE}/api/v1/watchlist/by-symbol/${encodeURIComponent(symbol)}`, {
+  const response = await fetchWithTimeout(`${BACKEND_BASE}/api/v1/watchlist/by-symbol/${encodeURIComponent(symbol)}`, {
     method: 'DELETE'
   });
 
@@ -291,7 +309,7 @@ export async function fetchPriceAlerts(options: FetchPriceAlertsOptions = {}): P
   }
 
   const suffix = params.toString() ? `?${params.toString()}` : '';
-  const response = await fetch(`${BACKEND_BASE}/api/v1/alerts${suffix}`, {
+  const response = await fetchWithTimeout(`${BACKEND_BASE}/api/v1/alerts${suffix}`, {
     headers: {
       Accept: 'application/json'
     },
@@ -302,7 +320,7 @@ export async function fetchPriceAlerts(options: FetchPriceAlertsOptions = {}): P
 }
 
 export async function createPriceAlert(payload: CreatePriceAlertPayload): Promise<PriceAlert> {
-  const response = await fetch(`${BACKEND_BASE}/api/v1/alerts`, {
+  const response = await fetchWithTimeout(`${BACKEND_BASE}/api/v1/alerts`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -315,7 +333,7 @@ export async function createPriceAlert(payload: CreatePriceAlertPayload): Promis
 }
 
 export async function updatePriceAlert(alertId: number, payload: UpdatePriceAlertPayload): Promise<PriceAlert> {
-  const response = await fetch(`${BACKEND_BASE}/api/v1/alerts/${alertId}`, {
+  const response = await fetchWithTimeout(`${BACKEND_BASE}/api/v1/alerts/${alertId}`, {
     method: 'PATCH',
     headers: {
       'Content-Type': 'application/json',
@@ -328,7 +346,7 @@ export async function updatePriceAlert(alertId: number, payload: UpdatePriceAler
 }
 
 export async function removePriceAlert(alertId: number): Promise<void> {
-  const response = await fetch(`${BACKEND_BASE}/api/v1/alerts/${alertId}`, {
+  const response = await fetchWithTimeout(`${BACKEND_BASE}/api/v1/alerts/${alertId}`, {
     method: 'DELETE'
   });
 
@@ -358,7 +376,7 @@ export async function fetchAlertEvents(options: FetchAlertEventsOptions = {}): P
   }
 
   const suffix = params.toString() ? `?${params.toString()}` : '';
-  const response = await fetch(`${BACKEND_BASE}/api/v1/alerts/events${suffix}`, {
+  const response = await fetchWithTimeout(`${BACKEND_BASE}/api/v1/alerts/events${suffix}`, {
     headers: {
       Accept: 'application/json'
     },
@@ -367,3 +385,4 @@ export async function fetchAlertEvents(options: FetchAlertEventsOptions = {}): P
 
   return readJson<AlertTriggerEventListResponse>(response);
 }
+

@@ -1,14 +1,18 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { vi } from 'vitest';
 
 import { WatchlistPanel } from '@/components/modules/WatchlistPanel';
 
+const addWatchlistSymbol = vi.fn();
+const fetchWatchlist = vi.fn();
+const removeWatchlistItem = vi.fn();
+
 vi.mock('@/lib/api', () => ({
-  addWatchlistSymbol: vi.fn(),
-  fetchWatchlist: vi.fn(),
-  removeWatchlistItem: vi.fn()
+  addWatchlistSymbol: (...args: unknown[]) => addWatchlistSymbol(...args),
+  fetchWatchlist: (...args: unknown[]) => fetchWatchlist(...args),
+  removeWatchlistItem: (...args: unknown[]) => removeWatchlistItem(...args)
 }));
 
 vi.mock('@/hooks/useWatchlist', () => ({
@@ -71,9 +75,38 @@ function renderPanel() {
 }
 
 describe('WatchlistPanel', () => {
+  beforeEach(() => {
+    addWatchlistSymbol.mockResolvedValue({
+      id: 2,
+      symbol: 'USDBRL',
+      displaySymbol: 'USD/BRL',
+      instrumentType: 'fx',
+      position: 2,
+      createdAt: new Date().toISOString(),
+      alerts: []
+    });
+    fetchWatchlist.mockResolvedValue({ asOf: new Date().toISOString(), items: [], warnings: [] });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('shows triggered indicator badge for rows with fired alerts', async () => {
     renderPanel();
 
     expect(await screen.findByText('TRG 1')).toBeInTheDocument();
+  });
+
+  it('supports quick-add preset flow', async () => {
+    renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: 'USD/BRL' }));
+
+    await waitFor(() => {
+      expect(addWatchlistSymbol).toHaveBeenCalledWith('USD/BRL');
+    });
+
+    expect(await screen.findByText('USD/BRL adicionado à watchlist.')).toBeInTheDocument();
   });
 });

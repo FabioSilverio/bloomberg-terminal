@@ -9,6 +9,13 @@ import { normalizeSymbolToken } from '@/lib/modules';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import { useTerminalStore } from '@/store/useTerminalStore';
 
+const QUICK_ADD_PRESETS = ['USD/BRL', 'EUR/BRL', '^BVSP', '^GSPC', 'BTCUSD'];
+
+type InlineFeedback = {
+  type: 'success' | 'error';
+  message: string;
+};
+
 function formatValue(value: number | undefined): string {
   if (value === undefined || value === null || Number.isNaN(value)) {
     return '--';
@@ -47,8 +54,9 @@ function summarizeAlertState(item: WatchlistItem): { label: string; className: s
 }
 
 export function WatchlistPanel() {
-  const [symbolInput, setSymbolInput] = useState('AAPL');
+  const [symbolInput, setSymbolInput] = useState('USD/BRL');
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [inlineFeedback, setInlineFeedback] = useState<InlineFeedback | null>(null);
 
   const queryClient = useQueryClient();
   const openModule = useTerminalStore((state) => state.openModule);
@@ -64,45 +72,63 @@ export function WatchlistPanel() {
     });
   };
 
-  const onAdd = async (event: FormEvent) => {
-    event.preventDefault();
-    const symbol = normalizeSymbolToken(symbolInput);
+  const publishFeedback = (payload: InlineFeedback) => {
+    setInlineFeedback(payload);
+    setCommandFeedback(payload.message);
+  };
+
+  const addSymbol = async (rawValue: string) => {
+    const symbol = normalizeSymbolToken(rawValue);
     if (!symbol) {
-      setCommandFeedback('WL ADD requires a symbol. Examples: AAPL, EURUSD, GBP/JPY.');
+      publishFeedback({
+        type: 'error',
+        message: 'WL ADD requires a valid symbol (examples: USD/BRL, USDBRL, AAPL, BTCUSD).'
+      });
       return;
     }
 
     setBusyKey('add');
     try {
-      await addWatchlistSymbol(symbol);
-      const snapshot = await refreshWatchlist();
-      const persisted = snapshot.items.some((item) => item.symbol === symbol);
-      if (!persisted) {
-        throw new Error(`Watchlist add validation failed for ${symbol}.`);
-      }
-
-      setCommandFeedback(`Added ${symbol} to watchlist`);
-      setSymbolInput(symbol);
+      const created = await addWatchlistSymbol(symbol);
+      await refreshWatchlist();
+      setSymbolInput(created.displaySymbol || symbol);
+      publishFeedback({
+        type: 'success',
+        message: `${created.displaySymbol || created.symbol} adicionado à watchlist.`
+      });
     } catch (requestError) {
-      setCommandFeedback(requestError instanceof Error ? requestError.message : 'Failed to add watchlist symbol');
+      publishFeedback({
+        type: 'error',
+        message: requestError instanceof Error ? requestError.message : 'Falha ao adicionar símbolo.'
+      });
     } finally {
       setBusyKey(null);
     }
+  };
+
+  const onAdd = async (event: FormEvent) => {
+    event.preventDefault();
+    await addSymbol(symbolInput);
+  };
+
+  const onQuickAdd = async (preset: string) => {
+    await addSymbol(preset);
   };
 
   const onRemove = async (itemId: number, symbol: string) => {
     setBusyKey(`rm-${itemId}`);
     try {
       await removeWatchlistItem(itemId);
-      const snapshot = await refreshWatchlist();
-      const persisted = snapshot.items.some((item) => item.symbol === symbol);
-      if (persisted) {
-        throw new Error(`Watchlist remove validation failed for ${symbol}.`);
-      }
-
-      setCommandFeedback(`Removed ${symbol} from watchlist`);
+      await refreshWatchlist();
+      publishFeedback({
+        type: 'success',
+        message: `${symbol} removido da watchlist.`
+      });
     } catch (requestError) {
-      setCommandFeedback(requestError instanceof Error ? requestError.message : 'Failed to remove watchlist symbol');
+      publishFeedback({
+        type: 'error',
+        message: requestError instanceof Error ? requestError.message : 'Falha ao remover símbolo.'
+      });
     } finally {
       setBusyKey(null);
     }
@@ -156,6 +182,19 @@ export function WatchlistPanel() {
         </div>
       )}
 
+      {inlineFeedback && (
+        <div
+          className={clsx(
+            'mx-2 mt-2 border px-2 py-1 text-[11px]',
+            inlineFeedback.type === 'success'
+              ? 'border-[#3f6e4f] bg-[#112419] text-[#8de8b2]'
+              : 'border-[#8c3c3c] bg-[#2a1414] text-[#ffb5b5]'
+          )}
+        >
+          {inlineFeedback.message}
+        </div>
+      )}
+
       <div className="min-h-0 flex-1 overflow-auto p-2">
         <table className="w-full border-collapse text-xs">
           <thead>
@@ -170,15 +209,15 @@ export function WatchlistPanel() {
           </thead>
           <tbody>
             <tr className="border-t border-[#152033] bg-[#0b1119]">
-              <td colSpan={6} className="px-2 py-1.5">
-                <form onSubmit={onAdd} className="flex items-center gap-2">
+              <td colSpan={6} className="space-y-2 px-2 py-1.5">
+                <form onSubmit={onAdd} className="flex flex-wrap items-center gap-2">
                   <span className="text-[10px] uppercase tracking-wide text-terminal-muted">WL ADD</span>
                   <input
                     value={symbolInput}
                     onChange={(event) => setSymbolInput(event.target.value)}
-                    className="h-6 w-36 border border-[#233044] bg-[#05080d] px-2 text-xs text-[#d7e2f0] outline-none ring-terminal-accent focus:ring-1"
+                    className="h-6 w-40 border border-[#233044] bg-[#05080d] px-2 text-xs text-[#d7e2f0] outline-none ring-terminal-accent focus:ring-1"
                     spellCheck={false}
-                    placeholder="AAPL / EURUSD"
+                    placeholder="USD/BRL, USDBRL, AAPL"
                   />
                   <button
                     type="submit"
@@ -187,7 +226,23 @@ export function WatchlistPanel() {
                   >
                     {busyKey === 'add' ? 'Adding...' : 'Add'}
                   </button>
+                  <span className="text-[10px] text-terminal-muted">Accepted: USD/BRL, USDBRL, BRLUSD, EUR/BRL, ^BVSP, BTCUSD</span>
                 </form>
+
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[10px] uppercase tracking-wide text-terminal-muted">Quick add</span>
+                  {QUICK_ADD_PRESETS.map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      disabled={busyKey === 'add'}
+                      onClick={() => onQuickAdd(preset)}
+                      className="border border-[#2a3850] bg-[#0f1724] px-2 py-0.5 text-[10px] uppercase tracking-wide text-[#c8d8ee] hover:border-[#3c5374] disabled:opacity-60"
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
               </td>
             </tr>
 
@@ -198,7 +253,13 @@ export function WatchlistPanel() {
               const alertState = summarizeAlertState(item);
 
               return (
-                <tr key={item.id} className={clsx('border-t border-[#152033] hover:bg-[#10192a]', item.alerts.some((a) => a.triggerState === 'triggered') && 'bg-[#1d1c0f]')}>
+                <tr
+                  key={item.id}
+                  className={clsx(
+                    'border-t border-[#152033] hover:bg-[#10192a]',
+                    item.alerts.some((a) => a.triggerState === 'triggered') && 'bg-[#1d1c0f]'
+                  )}
+                >
                   <td className="px-2 py-1 font-semibold text-[#e5eefb]">
                     <button
                       type="button"
@@ -226,10 +287,7 @@ export function WatchlistPanel() {
                     <button
                       type="button"
                       onClick={() => onOpenAlerts(item)}
-                      className={clsx(
-                        'border px-2 py-0.5 text-[10px] uppercase tracking-wide',
-                        alertState.className
-                      )}
+                      className={clsx('border px-2 py-0.5 text-[10px] uppercase tracking-wide', alertState.className)}
                       title="Open alerts panel for this symbol"
                     >
                       {alertState.label}
@@ -254,7 +312,7 @@ export function WatchlistPanel() {
                 <td colSpan={6} className="px-2 py-4">
                   <div className="flex flex-col gap-2 border border-terminal-line bg-[#0b1119] p-3 text-[11px] text-terminal-muted">
                     <div className="font-semibold text-[#d3deee]">Watchlist is empty.</div>
-                    <div>Add symbols inline above or via command bar: WL ADD AAPL / WL ADD EURUSD.</div>
+                    <div>Use quick buttons above or type WL ADD USD/BRL in command bar.</div>
                     <div>Tip: click any symbol row to quick-open INTRA or ALRT.</div>
                   </div>
                 </td>

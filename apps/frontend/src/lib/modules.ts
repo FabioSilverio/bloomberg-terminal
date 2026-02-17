@@ -54,8 +54,41 @@ const ALERT_CONDITION_ALIASES: Record<string, AlertCondition> = {
   PERCENT_MOVE_DOWN: 'percent_move_down'
 };
 
+const CRYPTO_BASE_CODES = new Set(['BTC', 'ETH', 'SOL', 'XRP', 'DOGE', 'BNB', 'ADA', 'AVAX', 'DOT', 'LTC']);
+
 export function normalizeSymbolToken(raw: string): string {
-  return raw.trim().toUpperCase().replace(/\s+/g, '').replace(/[^A-Z0-9=/.\-^]/g, '');
+  let normalized = raw.trim().toUpperCase().replace(/\s+/g, '').replace(/[^A-Z0-9=/.\-^]/g, '');
+  if (!normalized) {
+    return '';
+  }
+
+  const bloombergFx = normalized.match(/^([A-Z]{6})(?:CURNCY|CURRENCY)$/);
+  if (bloombergFx) {
+    normalized = bloombergFx[1];
+  }
+
+  if (normalized === 'BRLUSD' || normalized === 'BRL/USD' || normalized === 'BRL-USD') {
+    return 'USD/BRL';
+  }
+
+  if (/^[A-Z]{3}[/-][A-Z]{3}$/.test(normalized)) {
+    return normalized.replace('-', '/');
+  }
+
+  if (/^[A-Z]{6}$/.test(normalized)) {
+    const base = normalized.slice(0, 3);
+    const quote = normalized.slice(3);
+
+    if (base === 'BRL' && quote === 'USD') {
+      return 'USD/BRL';
+    }
+
+    if (CRYPTO_BASE_CODES.has(base) && (quote === 'USD' || quote === 'USDT')) {
+      return `${base}-${quote}`;
+    }
+  }
+
+  return normalized;
 }
 
 function parseAlertCondition(rawToken?: string): AlertCondition | null {
