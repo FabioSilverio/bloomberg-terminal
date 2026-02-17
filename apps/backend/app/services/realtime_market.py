@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -51,6 +52,12 @@ INDEX_TO_STOOQ = {
     '^RUT': '^rut',
 }
 
+FX_ALIAS_MAP = {
+    'BRLUSD': 'USDBRL',
+}
+
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class SymbolDescriptor:
@@ -82,19 +89,19 @@ class RealtimeMarketService:
         if re.fullmatch(r'[A-Z]{3}[/-][A-Z]{3}', raw):
             base = raw[:3]
             quote_ccy = raw[-3:]
-            canonical = f'{base}{quote_ccy}'
+            canonical = self._normalize_fx_pair(base, quote_ccy)
             return SymbolDescriptor(
                 canonical=canonical,
                 provider_symbol=f'{canonical}=X',
-                display_symbol=f'{base}/{quote_ccy}',
+                display_symbol=f'{canonical[:3]}/{canonical[3:]}',
                 instrument_type='fx',
             )
 
         if re.fullmatch(r'[A-Z]{6}=X', raw):
-            canonical = raw[:6]
+            canonical = self._normalize_fx_pair(raw[:3], raw[3:6])
             return SymbolDescriptor(
                 canonical=canonical,
-                provider_symbol=raw,
+                provider_symbol=f'{canonical}=X',
                 display_symbol=f'{canonical[:3]}/{canonical[3:]}',
                 instrument_type='fx',
             )
@@ -112,15 +119,13 @@ class RealtimeMarketService:
                 )
 
             if base in FIAT_CODES and quote_ccy in FIAT_CODES:
-                canonical = raw
+                canonical = self._normalize_fx_pair(base, quote_ccy)
                 return SymbolDescriptor(
                     canonical=canonical,
                     provider_symbol=f'{canonical}=X',
-                    display_symbol=f'{base}/{quote_ccy}',
+                    display_symbol=f'{canonical[:3]}/{canonical[3:]}',
                     instrument_type='fx',
                 )
-
-
 
         if re.fullmatch(r'[A-Z]{2,6}-[A-Z]{3,4}', raw):
             base, quote_ccy = raw.split('-', 1)
@@ -144,70 +149,78 @@ class RealtimeMarketService:
 
     async def get_intraday(self, raw_symbol: str) -> IntradayResponse:
         descriptor = self.normalize_symbol(raw_symbol)
-        key_suffix = self._cache_key_suffix(descriptor.canonical)
 
-        ui_key = f'market:intraday:{key_suffix}:ui'
-        upstream_key = f'market:intraday:{key_suffix}:upstream'
+        try:
+            key_suffix = self._cache_key_suffix(descriptor.canonical)
 
-        cached_ui = await self.cache.get(ui_key)
-        if cached_ui is not None:
-            return IntradayResponse.model_validate(cached_ui)
+            ui_key = f'market:intraday:{key_suffix}:ui'
+            upstream_key = f'market:intraday:{key_suffix}:upstream'
 
-        symbol_lock = await self._get_symbol_lock(key_suffix)
-
-        async with symbol_lock:
             cached_ui = await self.cache.get(ui_key)
             if cached_ui is not None:
                 return IntradayResponse.model_validate(cached_ui)
 
-            upstream_response, upstream_fetched_at = await self._load_upstream_snapshot(upstream_key)
-            should_refresh_live = (
-                upstream_response is None
-                or upstream_fetched_at is None
-                or (datetime.now(timezone.utc) - upstream_fetched_at).total_seconds()
-                >= self.settings.market_upstream_refresh_seconds
+            symbol_lock = await self._get_symbol_lock(key_suffix)
+
+            async with symbol_lock:
+                cached_ui = await self.cache.get(ui_key)
+                if cached_ui is not None:
+                    return IntradayResponse.model_validate(cached_ui)
+
+                upstream_response, upstream_fetched_at = await self._load_upstream_snapshot(upstream_key)
+                should_refresh_live = (
+                    upstream_response is None
+                    or upstream_fetched_at is None
+                    or (datetime.now(timezone.utc) - upstream_fetched_at).total_seconds()
+                    >= self.settings.market_upstream_refresh_seconds
+                )
+
+                response: IntradayResponse | None = upstream_response
+
+                if should_refresh_live:
+                    live_response = await self._fetch_live_intraday(descriptor)
+                    if live_response is not None:
+                        response = live_response
+                        await self.cache.set(
+                            upstream_key,
+                            {
+                                'fetchedAt': datetime.now(timezone.utc).isoformat(),
+                                'payload': live_response.model_dump(mode='json', by_alias=True),
+                            },
+                            ttl_seconds=self.settings.market_stale_ttl_seconds,
+                        )
+                    elif upstream_response is not None:
+                        stale_warnings = self._dedupe(
+                            [*upstream_response.warnings, 'Live refresh failed; serving stale snapshot.']
+                        )
+                        response = upstream_response.model_copy(
+                            update={
+                                'stale': True,
+                                'warnings': stale_warnings,
+                            }
+                        )
+                    else:
+                        response = self._empty_intraday_response(descriptor, warnings=['No live intraday data available.'])
+
+                if response is None:
+                    response = self._empty_intraday_response(descriptor, warnings=['No intraday data available.'])
+
+                freshness_seconds = int(max((datetime.now(timezone.utc) - response.as_of).total_seconds(), 0))
+                response = response.model_copy(update={'freshness_seconds': freshness_seconds})
+
+                await self.cache.set(
+                    ui_key,
+                    response.model_dump(mode='json', by_alias=True),
+                    ttl_seconds=self.settings.market_cache_ttl_seconds,
+                )
+
+                return response
+        except Exception as exc:
+            logger.exception('Intraday pipeline failed for symbol=%s', descriptor.canonical)
+            return self._empty_intraday_response(
+                descriptor,
+                warnings=[f'Intraday temporarily unavailable ({self._summarize_error(exc)}).'],
             )
-
-            response: IntradayResponse | None = upstream_response
-
-            if should_refresh_live:
-                live_response = await self._fetch_live_intraday(descriptor)
-                if live_response is not None:
-                    response = live_response
-                    await self.cache.set(
-                        upstream_key,
-                        {
-                            'fetchedAt': datetime.now(timezone.utc).isoformat(),
-                            'payload': live_response.model_dump(mode='json', by_alias=True),
-                        },
-                        ttl_seconds=self.settings.market_stale_ttl_seconds,
-                    )
-                elif upstream_response is not None:
-                    stale_warnings = self._dedupe(
-                        [*upstream_response.warnings, 'Live refresh failed; serving stale snapshot.']
-                    )
-                    response = upstream_response.model_copy(
-                        update={
-                            'stale': True,
-                            'warnings': stale_warnings,
-                        }
-                    )
-                else:
-                    response = self._empty_intraday_response(descriptor, warnings=['No live intraday data available.'])
-
-            if response is None:
-                response = self._empty_intraday_response(descriptor, warnings=['No intraday data available.'])
-
-            freshness_seconds = int(max((datetime.now(timezone.utc) - response.as_of).total_seconds(), 0))
-            response = response.model_copy(update={'freshness_seconds': freshness_seconds})
-
-            await self.cache.set(
-                ui_key,
-                response.model_dump(mode='json', by_alias=True),
-                ttl_seconds=self.settings.market_cache_ttl_seconds,
-            )
-
-            return response
 
     async def _load_upstream_snapshot(self, upstream_key: str) -> tuple[IntradayResponse | None, datetime | None]:
         upstream_payload = await self.cache.get(upstream_key)
@@ -437,6 +450,11 @@ class RealtimeMarketService:
             warnings=['Near real-time snapshot from fallback source.'],
             points=points,
         )
+
+    @staticmethod
+    def _normalize_fx_pair(base: str, quote_ccy: str) -> str:
+        candidate = f'{base}{quote_ccy}'
+        return FX_ALIAS_MAP.get(candidate, candidate)
 
     @staticmethod
     def _cache_key_suffix(symbol: str) -> str:

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
@@ -11,6 +13,8 @@ from app.models.watchlist import WatchlistItem
 from app.schemas.watchlist import WatchlistAlert, WatchlistItemResponse, WatchlistQuote, WatchlistResponse
 from app.services.price_alerts import PriceAlertService
 from app.services.realtime_market import RealtimeMarketService
+
+logger = logging.getLogger(__name__)
 
 
 class WatchlistService:
@@ -25,8 +29,17 @@ class WatchlistService:
         self.price_alerts = price_alerts
 
     async def get_snapshot(self, db: AsyncSession) -> WatchlistResponse:
-        items = await self._list_items(db)
         warnings: list[str] = []
+
+        try:
+            items = await self._list_items(db)
+        except SQLAlchemyError as exc:
+            logger.exception('Watchlist snapshot failed while listing items')
+            return WatchlistResponse(
+                as_of=datetime.now(timezone.utc),
+                items=[],
+                warnings=[f'Watchlist storage unavailable ({self._summarize_error(exc)}).'],
+            )
 
         if not items:
             return WatchlistResponse(as_of=datetime.now(timezone.utc), items=[], warnings=[])

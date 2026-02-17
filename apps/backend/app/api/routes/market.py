@@ -38,7 +38,10 @@ async def get_intraday(symbol: str, db: AsyncSession = Depends(get_db)) -> Intra
 
     try:
         payload = await container.realtime_market.get_intraday(symbol)
-        await _evaluate_intraday_alerts(payload, source_prefix='intraday', db=db)
+        try:
+            await _evaluate_intraday_alerts(payload, source_prefix='intraday', db=db)
+        except Exception:
+            logger.debug('Alert evaluator skipped for intraday HTTP symbol=%s', symbol, exc_info=True)
         return payload
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

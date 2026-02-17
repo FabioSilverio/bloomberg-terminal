@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.container import get_container
@@ -27,6 +28,11 @@ async def add_watchlist_item(payload: WatchlistAddRequest, db: AsyncSession = De
         item, _ = await container.watchlist.add_symbol(db, payload.symbol)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f'Watchlist storage unavailable. Run migrations and retry ({exc.__class__.__name__}).',
+        ) from exc
 
     return WatchlistItemResponse(
         id=item.id,
@@ -42,7 +48,14 @@ async def add_watchlist_item(payload: WatchlistAddRequest, db: AsyncSession = De
 @router.delete('/{item_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def remove_watchlist_item(item_id: int, db: AsyncSession = Depends(get_db)) -> Response:
     container = get_container()
-    removed = await container.watchlist.remove_item(db, item_id)
+    try:
+        removed = await container.watchlist.remove_item(db, item_id)
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f'Watchlist storage unavailable. Run migrations and retry ({exc.__class__.__name__}).',
+        ) from exc
+
     if not removed:
         raise HTTPException(status_code=404, detail='Watchlist item not found')
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -56,6 +69,11 @@ async def remove_watchlist_symbol(symbol: str, db: AsyncSession = Depends(get_db
         removed = await container.watchlist.remove_symbol(db, symbol)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f'Watchlist storage unavailable. Run migrations and retry ({exc.__class__.__name__}).',
+        ) from exc
 
     if not removed:
         raise HTTPException(status_code=404, detail='Symbol not present in watchlist')
@@ -65,7 +83,13 @@ async def remove_watchlist_symbol(symbol: str, db: AsyncSession = Depends(get_db
 @router.post('/reorder', response_model=list[WatchlistItemResponse])
 async def reorder_watchlist(payload: WatchlistReorderRequest, db: AsyncSession = Depends(get_db)) -> list[WatchlistItemResponse]:
     container = get_container()
-    items = await container.watchlist.reorder(db, payload.item_ids)
+    try:
+        items = await container.watchlist.reorder(db, payload.item_ids)
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f'Watchlist storage unavailable. Run migrations and retry ({exc.__class__.__name__}).',
+        ) from exc
 
     return [
         WatchlistItemResponse(

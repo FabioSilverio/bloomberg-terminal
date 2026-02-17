@@ -5,8 +5,16 @@ services:
     environment:
       NEXT_PUBLIC_API_BASE_URL: ""
       NEXT_PUBLIC_WS_BASE_URL: "ws://localhost/ws/market/overview"
+      NEXT_PUBLIC_API_TIMEOUT_MS: ${NEXT_PUBLIC_API_TIMEOUT_MS:-10000}
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     expose:
       - "3000"
 
@@ -24,11 +32,19 @@ services:
       FINNHUB_API_KEY: ${FINNHUB_API_KEY:-}
       POLYGON_API_KEY: ${POLYGON_API_KEY:-}
       NEWS_API_KEY: ${NEWS_API_KEY:-}
+      DB_MIGRATION_MAX_RETRIES: ${DB_MIGRATION_MAX_RETRIES:-30}
+      DB_MIGRATION_RETRY_DELAY_SECONDS: ${DB_MIGRATION_RETRY_DELAY_SECONDS:-2}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     expose:
       - "8000"
 
@@ -65,8 +81,10 @@ services:
   nginx:
     image: nginx:1.27-alpine
     depends_on:
-      - frontend
-      - backend
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
     ports:
       - "80:80"
     volumes:

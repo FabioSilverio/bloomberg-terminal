@@ -134,6 +134,7 @@ async def test_normalize_symbol_supports_equity_fx_and_aliases() -> None:
     fx = service.normalize_symbol('eur/usd')
     fx_alt = service.normalize_symbol('EURUSD')
     fx_bbg = service.normalize_symbol('eurusd curncy')
+    fx_brl_reverse = service.normalize_symbol('brlusd')
 
     assert eq.provider_symbol == 'AAPL'
     assert eq.instrument_type == 'equity'
@@ -148,6 +149,10 @@ async def test_normalize_symbol_supports_equity_fx_and_aliases() -> None:
     assert fx_alt.provider_symbol == 'EURUSD=X'
     assert fx_bbg.provider_symbol == 'EURUSD=X'
     assert fx_bbg.display_symbol == 'EUR/USD'
+
+    assert fx_brl_reverse.canonical == 'USDBRL'
+    assert fx_brl_reverse.provider_symbol == 'USDBRL=X'
+    assert fx_brl_reverse.display_symbol == 'USD/BRL'
 
 
 @pytest.mark.asyncio
@@ -220,3 +225,19 @@ async def test_intraday_falls_back_to_stale_upstream_snapshot_when_live_fails() 
     assert stale.last_price == baseline.last_price
     assert stale.stale is True
     assert any('stale snapshot' in warning.lower() for warning in stale.warnings)
+
+
+@pytest.mark.asyncio
+async def test_intraday_returns_graceful_payload_when_pipeline_raises() -> None:
+    class ExplodingCache(FakeCache):
+        async def get(self, key: str):  # type: ignore[override]
+            raise RuntimeError('cache offline')
+
+    service = RealtimeMarketService(build_settings(), ExplodingCache(), FakeHttp())
+
+    payload = await service.get_intraday('AAPL')
+
+    assert payload.symbol == 'AAPL'
+    assert payload.stale is True
+    assert payload.last_price == 0
+    assert any('temporarily unavailable' in warning.lower() for warning in payload.warnings)

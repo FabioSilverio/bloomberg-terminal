@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import Settings
 from app.schemas.intraday import IntradayResponse
@@ -175,3 +176,19 @@ async def test_get_snapshot_maps_quotes_for_each_item(monkeypatch: pytest.Monkey
     assert snapshot.items[0].alerts
     assert snapshot.items[0].alerts[0].threshold == pytest.approx(130.0)
     assert set(fake_alerts.evaluated_symbols) == {'AAPL', 'EURUSD'}
+
+
+@pytest.mark.asyncio
+async def test_get_snapshot_returns_graceful_warning_when_storage_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = WatchlistService(settings=build_settings(), realtime_market=FakeRealtime())
+
+    async def exploding_list_items(_db):
+        raise SQLAlchemyError('table missing')
+
+    monkeypatch.setattr(service, '_list_items', exploding_list_items)
+
+    snapshot = await service.get_snapshot(db=object())
+
+    assert snapshot.items == []
+    assert snapshot.warnings
+    assert 'Watchlist storage unavailable' in snapshot.warnings[0]
