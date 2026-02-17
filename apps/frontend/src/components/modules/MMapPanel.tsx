@@ -4,6 +4,14 @@ import clsx from 'clsx';
 import { useMarketOverview } from '@/hooks/useMarketOverview';
 import { MarketPoint } from '@/lib/api';
 
+const EXPECTED_COUNTS = {
+  indices: 4,
+  rates: 3,
+  fx: 3,
+  commodities: 4,
+  crypto: 3
+} as const;
+
 function PriceCell({ value }: { value: number }) {
   return <span className="font-semibold text-[#dce7f7]">{value.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>;
 }
@@ -77,18 +85,39 @@ export function MMapPanel() {
     );
   }
 
+  const totalExpected = Object.values(EXPECTED_COUNTS).reduce((acc, value) => acc + value, 0);
+  const totalLoaded =
+    data.sections.indices.length +
+    data.sections.rates.length +
+    data.sections.fx.length +
+    data.sections.commodities.length +
+    data.sections.crypto.length;
+
   return (
     <div className="flex h-full flex-col bg-terminal-panel">
       <div className="flex items-center justify-between border-b border-terminal-line px-3 py-2 text-[11px]">
         <div className="uppercase tracking-wider text-terminal-muted">As of {new Date(data.asOf).toLocaleTimeString()}</div>
         <div className={clsx('font-semibold', data.degraded ? 'text-terminal-down' : 'text-terminal-up')}>
-          {data.degraded ? 'DEGRADED MODE' : 'LIVE'}
+          {data.degraded ? 'DEGRADED MODE - FALLBACK PROVIDERS ACTIVE' : 'LIVE'}
         </div>
       </div>
 
+      {data.degraded && (
+        <div className="border-b border-terminal-line bg-[#21150f] px-3 py-2 text-[11px] text-[#ffbc7d]">
+          <div className="font-semibold">MMAP is running with partial/fallback data ({totalLoaded}/{totalExpected} instruments loaded).</div>
+          <div className="mt-1 text-[#ffd5a8]">
+            Check backend provider diagnostics at <span className="font-mono">/api/v1/health/providers</span> for last errors.
+          </div>
+        </div>
+      )}
+
       {data.warnings.length > 0 && (
         <div className="border-b border-terminal-line bg-[#21150f] px-3 py-1 text-[11px] text-[#ffbc7d]">
-          {data.warnings.join(' | ')}
+          <ul className="list-disc space-y-0.5 pl-4">
+            {data.warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
         </div>
       )}
 
