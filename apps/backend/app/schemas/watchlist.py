@@ -1,6 +1,22 @@
 from datetime import datetime, timezone
+from typing import Literal, Optional
 
 from pydantic import AliasChoices, BaseModel, Field
+
+
+class WatchlistAlert(BaseModel):
+    id: int
+    enabled: bool
+    direction: Literal['above', 'below']
+    target_price: Optional[float] = Field(
+        default=None,
+        serialization_alias='targetPrice',
+        validation_alias=AliasChoices('target_price', 'targetPrice'),
+    )
+    updated_at: datetime = Field(
+        serialization_alias='updatedAt',
+        validation_alias=AliasChoices('updated_at', 'updatedAt'),
+    )
 
 
 class WatchlistQuote(BaseModel):
@@ -45,6 +61,7 @@ class WatchlistItemResponse(BaseModel):
         validation_alias=AliasChoices('created_at', 'createdAt'),
     )
     quote: WatchlistQuote | None = None
+    alert: WatchlistAlert | None = None
 
 
 class WatchlistResponse(BaseModel):

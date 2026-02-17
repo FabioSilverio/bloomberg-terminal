@@ -47,6 +47,27 @@ class FakeRealtime:
         )
 
 
+class FakeAlertService:
+    def __init__(self, enabled: bool = True) -> None:
+        self.enabled = enabled
+
+    async def get_alert_map_for_items(self, _db, item_ids: list[int]):
+        if not self.enabled:
+            return {}
+
+        now = datetime.now(timezone.utc)
+        return {
+            item_id: SimpleNamespace(
+                id=item_id + 100,
+                enabled=True,
+                direction='above',
+                target_price=130.0,
+                updated_at=now,
+            )
+            for item_id in item_ids
+        }
+
+
 class FakeDb:
     def __init__(self, scalar_values: list[object | None]) -> None:
         self._scalar_values = list(scalar_values)
@@ -98,7 +119,11 @@ async def test_add_symbol_creates_watchlist_item_with_position() -> None:
 
 @pytest.mark.asyncio
 async def test_get_snapshot_maps_quotes_for_each_item(monkeypatch: pytest.MonkeyPatch) -> None:
-    service = WatchlistService(settings=build_settings(), realtime_market=FakeRealtime())
+    service = WatchlistService(
+        settings=build_settings(),
+        realtime_market=FakeRealtime(),
+        price_alerts=FakeAlertService(),
+    )
 
     items = [
         SimpleNamespace(
@@ -130,3 +155,5 @@ async def test_get_snapshot_maps_quotes_for_each_item(monkeypatch: pytest.Monkey
     assert snapshot.items[0].quote is not None
     assert snapshot.items[0].quote.source == 'test-feed'
     assert snapshot.items[1].display_symbol == 'EUR/USD'
+    assert snapshot.items[0].alert is not None
+    assert snapshot.items[0].alert.target_price == pytest.approx(130.0)

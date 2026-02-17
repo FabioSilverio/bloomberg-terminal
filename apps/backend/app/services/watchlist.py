@@ -8,14 +8,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.models.watchlist import WatchlistItem
-from app.schemas.watchlist import WatchlistItemResponse, WatchlistQuote, WatchlistResponse
+from app.schemas.watchlist import WatchlistAlert, WatchlistItemResponse, WatchlistQuote, WatchlistResponse
+from app.services.price_alerts import PriceAlertService
 from app.services.realtime_market import RealtimeMarketService
 
 
 class WatchlistService:
-    def __init__(self, settings: Settings, realtime_market: RealtimeMarketService) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        realtime_market: RealtimeMarketService,
+        price_alerts: PriceAlertService | None = None,
+    ) -> None:
         self.settings = settings
         self.realtime_market = realtime_market
+        self.price_alerts = price_alerts
 
     async def get_snapshot(self, db: AsyncSession) -> WatchlistResponse:
         items = await self._list_items(db)
@@ -23,6 +30,8 @@ class WatchlistService:
 
         if not items:
             return WatchlistResponse(as_of=datetime.now(timezone.utc), items=[], warnings=[])
+
+        alert_map = await self._safe_alert_map(db, [item.id for item in items])
 
         quote_results = await asyncio.gather(
             *(self.realtime_market.get_intraday(item.symbol) for item in items),
@@ -32,6 +41,17 @@ class WatchlistService:
         payload_items: list[WatchlistItemResponse] = []
         for item, result in zip(items, quote_results):
             quote_payload: WatchlistQuote | None = None
+            alert_payload: WatchlistAlert | None = None
+
+            alert = alert_map.get(item.id)
+            if alert is not None:
+                alert_payload = WatchlistAlert(
+                    id=alert.id,
+                    enabled=alert.enabled,
+                    direction=alert.direction,
+                    target_price=alert.target_price,
+                    updated_at=alert.updated_at,
+                )
 
             if isinstance(result, Exception):
                 warnings.append(f'{item.display_symbol}: {self._summarize_error(result)}')
@@ -58,6 +78,7 @@ class WatchlistService:
                     position=item.position,
                     created_at=item.created_at,
                     quote=quote_payload,
+                    alert=alert_payload,
                 )
             )
 
@@ -150,6 +171,15 @@ class WatchlistService:
         for idx, item in enumerate(items, start=1):
             item.position = idx
         await db.commit()
+
+    async def _safe_alert_map(self, db: AsyncSession, item_ids: list[int]) -> dict[int, object]:
+        if self.price_alerts is None:
+            return {}
+
+        try:
+            return await self.price_alerts.get_alert_map_for_items(db, item_ids)
+        except Exception:
+            return {}
 
     @staticmethod
     def _dedupe(items: list[str]) -> list[str]:
