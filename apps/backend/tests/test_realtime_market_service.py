@@ -36,6 +36,7 @@ class FakeHttp:
         self.fail_yahoo = False
         self.fail_stooq = False
         self.latency_seconds = 0.0
+        self.return_sparse_chart = False
 
     async def get_json(self, url: str, **kwargs: Any) -> Any:
         if 'finance.yahoo.com/v8/finance/chart' not in url:
@@ -49,6 +50,34 @@ class FakeHttp:
             await asyncio.sleep(self.latency_seconds)
 
         now = int(datetime.now(timezone.utc).timestamp())
+
+        if self.return_sparse_chart:
+            return {
+                'chart': {
+                    'result': [
+                        {
+                            'meta': {
+                                'currency': 'USD',
+                                'regularMarketPrice': 111.25,
+                                'chartPreviousClose': 110.5,
+                                'regularMarketTime': now,
+                                'regularMarketVolume': 8500,
+                            },
+                            'timestamp': [now],
+                            'indicators': {
+                                'quote': [
+                                    {
+                                        'close': [None],
+                                        'volume': [None],
+                                    }
+                                ]
+                            },
+                        }
+                    ],
+                    'error': None,
+                }
+            }
+
         return {
             'chart': {
                 'result': [
@@ -101,17 +130,24 @@ async def test_normalize_symbol_supports_equity_fx_and_aliases() -> None:
     service = RealtimeMarketService(build_settings(), FakeCache(), FakeHttp())
 
     eq = service.normalize_symbol('AAPL')
+    eq_class = service.normalize_symbol('brk.b')
     fx = service.normalize_symbol('eur/usd')
     fx_alt = service.normalize_symbol('EURUSD')
+    fx_bbg = service.normalize_symbol('eurusd curncy')
 
     assert eq.provider_symbol == 'AAPL'
     assert eq.instrument_type == 'equity'
+
+    assert eq_class.provider_symbol == 'BRK-B'
+    assert eq_class.instrument_type == 'equity'
 
     assert fx.provider_symbol == 'EURUSD=X'
     assert fx.display_symbol == 'EUR/USD'
     assert fx.instrument_type == 'fx'
 
     assert fx_alt.provider_symbol == 'EURUSD=X'
+    assert fx_bbg.provider_symbol == 'EURUSD=X'
+    assert fx_bbg.display_symbol == 'EUR/USD'
 
 
 @pytest.mark.asyncio
@@ -140,6 +176,21 @@ async def test_intraday_coalesces_parallel_requests() -> None:
     assert len(payloads) == 6
     assert all(item.last_price > 0 for item in payloads)
     assert http.yahoo_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_intraday_synthesizes_point_when_chart_series_is_empty() -> None:
+    http = FakeHttp()
+    http.return_sparse_chart = True
+
+    service = RealtimeMarketService(build_settings(), FakeCache(), http)
+    payload = await service.get_intraday('EURUSD Curncy')
+
+    assert payload.symbol == 'EURUSD'
+    assert payload.display_symbol == 'EUR/USD'
+    assert payload.last_price == pytest.approx(111.25)
+    assert len(payload.points) == 1
+    assert payload.points[0].price == pytest.approx(111.25)
 
 
 @pytest.mark.asyncio

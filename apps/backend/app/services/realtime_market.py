@@ -30,6 +30,7 @@ FIAT_CODES = {
     'MXN',
 }
 
+
 CRYPTO_CODES = {
     'BTC',
     'ETH',
@@ -74,6 +75,10 @@ class RealtimeMarketService:
         if not raw:
             raise ValueError('Symbol is required')
 
+        bloomberg_fx = re.fullmatch(r'([A-Z]{6})(?:CURNCY|CURRENCY)', raw)
+        if bloomberg_fx:
+            raw = bloomberg_fx.group(1)
+
         if re.fullmatch(r'[A-Z]{3}[/-][A-Z]{3}', raw):
             base = raw[:3]
             quote_ccy = raw[-3:]
@@ -107,12 +112,15 @@ class RealtimeMarketService:
                 )
 
             if base in FIAT_CODES and quote_ccy in FIAT_CODES:
+                canonical = raw
                 return SymbolDescriptor(
-                    canonical=raw,
-                    provider_symbol=f'{raw}=X',
+                    canonical=canonical,
+                    provider_symbol=f'{canonical}=X',
                     display_symbol=f'{base}/{quote_ccy}',
                     instrument_type='fx',
                 )
+
+
 
         if re.fullmatch(r'[A-Z]{2,6}-[A-Z]{3,4}', raw):
             base, quote_ccy = raw.split('-', 1)
@@ -127,7 +135,7 @@ class RealtimeMarketService:
         if re.fullmatch(r'[\^A-Z][A-Z0-9.\-]{0,15}', raw):
             return SymbolDescriptor(
                 canonical=raw,
-                provider_symbol=raw,
+                provider_symbol=self._normalize_equity_provider_symbol(raw),
                 display_symbol=raw,
                 instrument_type='equity',
             )
@@ -291,7 +299,7 @@ class RealtimeMarketService:
         closes = quote_data.get('close') if isinstance(quote_data.get('close'), list) else []
         volumes = quote_data.get('volume') if isinstance(quote_data.get('volume'), list) else []
 
-        points: list[IntradayPoint] = []
+        by_timestamp: dict[int, IntradayPoint] = {}
         for idx, ts in enumerate(timestamps):
             if not isinstance(ts, (int, float)):
                 continue
@@ -300,14 +308,15 @@ class RealtimeMarketService:
             if close_value is None:
                 continue
 
+            ts_key = int(float(ts))
             volume_value = self._safe_float(volumes[idx] if idx < len(volumes) else None)
-            points.append(
-                IntradayPoint(
-                    time=datetime.fromtimestamp(float(ts), tz=timezone.utc),
-                    price=close_value,
-                    volume=volume_value,
-                )
+            by_timestamp[ts_key] = IntradayPoint(
+                time=datetime.fromtimestamp(float(ts_key), tz=timezone.utc),
+                price=close_value,
+                volume=volume_value,
             )
+
+        points: list[IntradayPoint] = [by_timestamp[key] for key in sorted(by_timestamp)]
 
         last_price = self._safe_float(meta.get('regularMarketPrice'))
         if last_price is None and points:
@@ -328,6 +337,9 @@ class RealtimeMarketService:
             if market_time is not None
             else (points[-1].time if points else datetime.now(timezone.utc))
         )
+
+        if not points:
+            points = [IntradayPoint(time=as_of, price=last_price, volume=self._safe_float(meta.get('regularMarketVolume')))]
 
         volume = self._safe_float(meta.get('regularMarketVolume'))
         if volume is None and points and points[-1].volume is not None:
@@ -398,8 +410,16 @@ class RealtimeMarketService:
         change_percent = (change / previous * 100) if previous else 0.0
 
         points = [
-            IntradayPoint(time=as_of - timedelta(minutes=5), price=previous, volume=self._safe_float(row[7]) if len(row) > 7 else None),
-            IntradayPoint(time=as_of, price=close_price, volume=self._safe_float(row[7]) if len(row) > 7 else None),
+            IntradayPoint(
+                time=as_of - timedelta(minutes=5),
+                price=previous,
+                volume=self._safe_float(row[7]) if len(row) > 7 else None,
+            ),
+            IntradayPoint(
+                time=as_of,
+                price=close_price,
+                volume=self._safe_float(row[7]) if len(row) > 7 else None,
+            ),
         ]
 
         return IntradayResponse(
@@ -421,6 +441,18 @@ class RealtimeMarketService:
     @staticmethod
     def _cache_key_suffix(symbol: str) -> str:
         return re.sub(r'[^A-Z0-9]+', '_', symbol.upper()).strip('_') or 'SYMBOL'
+
+    @staticmethod
+    def _normalize_equity_provider_symbol(symbol: str) -> str:
+        # Yahoo expects class shares in dash format (BRK-B) while traders commonly input BRK.B.
+        if symbol.startswith('^'):
+            return symbol
+
+        parts = symbol.split('.')
+        if len(parts) == 2 and len(parts[1]) == 1 and parts[0]:
+            return f'{parts[0]}-{parts[1]}'
+
+        return symbol
 
     @staticmethod
     def _safe_float(value: Any) -> float | None:
@@ -522,4 +554,5 @@ class RealtimeMarketService:
             warnings=warnings,
             points=[],
         )
+
 
