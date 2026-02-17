@@ -1,3 +1,4 @@
+import { AlertsPanel } from '@/components/modules/AlertsPanel';
 import { IntradayPanel } from '@/components/modules/IntradayPanel';
 import { MMapPanel } from '@/components/modules/MMapPanel';
 import { PlaceholderPanel } from '@/components/modules/PlaceholderPanel';
@@ -13,6 +14,8 @@ export function ModuleRenderer({ panel }: { panel: PanelConfig }) {
       return <IntradayPanel panelId={panel.id} initialSymbol={panel.context?.symbol ?? 'AAPL'} />;
     case 'WL':
       return <WatchlistPanel />;
+    case 'ALRT':
+      return <AlertsPanel panelId={panel.id} initialSymbol={panel.context?.symbol} />;
     default:
       return <PlaceholderPanel module={panel.module} />;
   }

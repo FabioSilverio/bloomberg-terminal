@@ -1,16 +1,10 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
+import React, { FormEvent, useState } from 'react';
 import clsx from 'clsx';
 import { useQueryClient } from '@tanstack/react-query';
 
-import {
-  addWatchlistSymbol,
-  fetchWatchlist,
-  removeWatchlistItem,
-  upsertWatchlistAlert,
-  WatchlistItem
-} from '@/lib/api';
+import { addWatchlistSymbol, fetchWatchlist, removeWatchlistItem, WatchlistItem } from '@/lib/api';
 import { normalizeSymbolToken } from '@/lib/modules';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import { useTerminalStore } from '@/store/useTerminalStore';
@@ -20,6 +14,36 @@ function formatValue(value: number | undefined): string {
     return '--';
   }
   return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
+
+function summarizeAlertState(item: WatchlistItem): { label: string; className: string } {
+  if (!item.alerts || item.alerts.length === 0) {
+    return {
+      label: 'NONE',
+      className: 'border-terminal-line bg-[#121b2a] text-terminal-accent'
+    };
+  }
+
+  const triggered = item.alerts.some((alert) => alert.triggerState === 'triggered');
+  if (triggered) {
+    return {
+      label: `TRG ${item.alerts.length}`,
+      className: 'border-[#8f7c2d] bg-[#2a2410] text-[#ffdf7a]'
+    };
+  }
+
+  const active = item.alerts.filter((alert) => alert.enabled).length;
+  if (active > 0) {
+    return {
+      label: `ARM ${active}`,
+      className: 'border-[#3f6e4f] bg-[#112419] text-[#8de8b2]'
+    };
+  }
+
+  return {
+    label: `OFF ${item.alerts.length}`,
+    className: 'border-[#4c3940] bg-[#1d1417] text-[#f4b6c4]'
+  };
 }
 
 export function WatchlistPanel() {
@@ -89,42 +113,9 @@ export function WatchlistPanel() {
     setCommandFeedback(`Opened INTRA ${item.symbol}`);
   };
 
-  const onToggleAlert = async (item: WatchlistItem) => {
-    setBusyKey(`al-${item.id}`);
-    try {
-      const existing = item.alert;
-      const nextEnabled = !(existing?.enabled ?? false);
-      const targetPrice = existing?.targetPrice ?? item.quote?.lastPrice;
-
-      if (nextEnabled && (targetPrice === undefined || targetPrice <= 0)) {
-        throw new Error(`Cannot enable alert for ${item.displaySymbol} without a valid price.`);
-      }
-
-      await upsertWatchlistAlert(item.id, {
-        enabled: nextEnabled,
-        direction: existing?.direction ?? 'above',
-        targetPrice
-      });
-
-      const snapshot = await refreshWatchlist();
-      const persisted = snapshot.items.find((entry) => entry.id === item.id)?.alert;
-      if (nextEnabled && !persisted?.enabled) {
-        throw new Error(`Alert enable validation failed for ${item.displaySymbol}.`);
-      }
-      if (!nextEnabled && persisted?.enabled) {
-        throw new Error(`Alert disable validation failed for ${item.displaySymbol}.`);
-      }
-
-      setCommandFeedback(
-        nextEnabled
-          ? `Alert armed for ${item.displaySymbol} @ ${formatValue(targetPrice)}`
-          : `Alert disabled for ${item.displaySymbol}`
-      );
-    } catch (requestError) {
-      setCommandFeedback(requestError instanceof Error ? requestError.message : 'Failed to update alert');
-    } finally {
-      setBusyKey(null);
-    }
+  const onOpenAlerts = (item: WatchlistItem) => {
+    openModule('ALRT', { symbol: item.symbol });
+    setCommandFeedback(`Opened ALRT ${item.symbol}`);
   };
 
   if (isLoading) {
@@ -204,10 +195,10 @@ export function WatchlistPanel() {
               const quote = item.quote;
               const change = quote?.change ?? 0;
               const changePercent = quote?.changePercent ?? 0;
-              const alertEnabled = item.alert?.enabled ?? false;
+              const alertState = summarizeAlertState(item);
 
               return (
-                <tr key={item.id} className="border-t border-[#152033] hover:bg-[#10192a]">
+                <tr key={item.id} className={clsx('border-t border-[#152033] hover:bg-[#10192a]', item.alerts.some((a) => a.triggerState === 'triggered') && 'bg-[#1d1c0f]')}>
                   <td className="px-2 py-1 font-semibold text-[#e5eefb]">
                     <button
                       type="button"
@@ -234,25 +225,14 @@ export function WatchlistPanel() {
                   <td className="px-2 py-1 text-right">
                     <button
                       type="button"
-                      disabled={busyKey === `al-${item.id}`}
-                      onClick={() => onToggleAlert(item)}
+                      onClick={() => onOpenAlerts(item)}
                       className={clsx(
-                        'border px-2 py-0.5 text-[10px] uppercase tracking-wide disabled:opacity-60',
-                        alertEnabled
-                          ? 'border-[#3f6e4f] bg-[#112419] text-[#8de8b2]'
-                          : 'border-terminal-line bg-[#121b2a] text-terminal-accent'
+                        'border px-2 py-0.5 text-[10px] uppercase tracking-wide',
+                        alertState.className
                       )}
-                      title={
-                        alertEnabled
-                          ? `Alert ON @ ${formatValue(item.alert?.targetPrice)}`
-                          : 'Enable alert at current price'
-                      }
+                      title="Open alerts panel for this symbol"
                     >
-                      {busyKey === `al-${item.id}`
-                        ? '...'
-                        : alertEnabled
-                          ? `ON ${formatValue(item.alert?.targetPrice)}`
-                          : 'OFF'}
+                      {alertState.label}
                     </button>
                   </td>
                   <td className="px-2 py-1 text-right">
@@ -275,7 +255,7 @@ export function WatchlistPanel() {
                   <div className="flex flex-col gap-2 border border-terminal-line bg-[#0b1119] p-3 text-[11px] text-terminal-muted">
                     <div className="font-semibold text-[#d3deee]">Watchlist is empty.</div>
                     <div>Add symbols inline above or via command bar: WL ADD AAPL / WL ADD EURUSD.</div>
-                    <div>Tip: click any symbol row to quick-open INTRA.</div>
+                    <div>Tip: click any symbol row to quick-open INTRA or ALRT.</div>
                   </div>
                 </td>
               </tr>

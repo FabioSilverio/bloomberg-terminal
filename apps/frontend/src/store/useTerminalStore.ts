@@ -18,12 +18,14 @@ interface TerminalState {
   densityMode: DensityMode;
   commandFeedback: string;
   mmapRefreshMs: number;
+  alertSoundEnabled: boolean;
   setLayout: (layout: Layout[]) => void;
   openModule: (module: ModuleCode, context?: CommandContext) => void;
   focusPanel: (panelId: string) => void;
   setPanelContext: (panelId: string, context: CommandContext) => void;
   setCommandFeedback: (feedback: string) => void;
   setMmapRefreshMs: (value: number) => void;
+  setAlertSoundEnabled: (enabled: boolean) => void;
   setActivePanel: (panelId: string) => void;
   closePanel: (panelId: string) => void;
   cyclePanels: (direction: 1 | -1) => void;
@@ -37,6 +39,7 @@ const MODULE_TITLES: Record<ModuleCode, string> = {
   INTRA: 'Intraday Realtime',
   EQRT: 'Intraday Realtime',
   WL: 'Watchlist',
+  ALRT: 'Alerts Manager',
   EQ: 'Equities',
   ECOF: 'Economic Forecasts',
   NEWS: 'News Monitor',
@@ -54,6 +57,10 @@ const MODULE_TITLES: Record<ModuleCode, string> = {
 function buildPanelTitle(module: ModuleCode, context?: CommandContext): string {
   if ((module === 'INTRA' || module === 'EQRT') && context?.symbol) {
     return `Intraday ${context.symbol}`;
+  }
+
+  if (module === 'ALRT' && context?.symbol) {
+    return `Alerts ${context.symbol}`;
   }
 
   return MODULE_TITLES[module];
@@ -85,10 +92,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   activePanelId: INITIAL_PANELS[0].id,
   densityMode: 'compact',
   mmapRefreshMs: Number.isFinite(DEFAULT_MMAP_REFRESH_MS) ? Math.max(500, DEFAULT_MMAP_REFRESH_MS) : 2000,
-  commandFeedback: 'Try: MMAP | INTRA AAPL | WL | WL ADD EURUSD',
+  alertSoundEnabled: true,
+  commandFeedback: 'Try: MMAP | INTRA AAPL | WL ADD EURUSD | ALRT ADD AAPL ABOVE 200',
   setLayout: (layout) => set({ layout }),
   setCommandFeedback: (commandFeedback) => set({ commandFeedback }),
   setMmapRefreshMs: (value) => set({ mmapRefreshMs: Math.max(500, Math.round(value)) }),
+  setAlertSoundEnabled: (enabled) => set({ alertSoundEnabled: enabled }),
   setActivePanel: (panelId) => {
     if (!get().panels.some((panel) => panel.id === panelId)) {
       return;
@@ -208,6 +217,29 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     });
 
     if (existing) {
+      if (normalizedModule === 'ALRT' && normalizedContext?.symbol) {
+        set((state) => ({
+          activePanelId: existing.id,
+          panels: state.panels.map((panel) =>
+            panel.id === existing.id
+              ? {
+                  ...panel,
+                  context: {
+                    ...panel.context,
+                    symbol: normalizedContext?.symbol
+                  },
+                  title: buildPanelTitle('ALRT', {
+                    ...panel.context,
+                    symbol: normalizedContext?.symbol
+                  })
+                }
+              : panel
+          ),
+          commandFeedback: `ALRT ${normalizedContext.symbol} already open`
+        }));
+        return;
+      }
+
       set({
         activePanelId: existing.id,
         commandFeedback:
@@ -231,8 +263,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       i: nextId,
       x: (panelCount * 3) % 12,
       y: Infinity,
-      w: normalizedModule === 'WL' ? 6 : 7,
-      h: normalizedModule === 'WL' ? 12 : 11,
+      w: normalizedModule === 'WL' ? 6 : normalizedModule === 'ALRT' ? 7 : 7,
+      h: normalizedModule === 'WL' ? 12 : normalizedModule === 'ALRT' ? 12 : 11,
       minW: 3,
       minH: 8
     };

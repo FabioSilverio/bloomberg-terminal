@@ -41,6 +41,11 @@ export function useHotkeys({
         openModule('WL');
       }
 
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'a') {
+        event.preventDefault();
+        openModule('ALRT');
+      }
+
       if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'd') {
         event.preventDefault();
         toggleDensity();

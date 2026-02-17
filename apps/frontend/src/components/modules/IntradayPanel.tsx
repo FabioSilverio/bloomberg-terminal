@@ -2,10 +2,11 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
+import { useQuery } from '@tanstack/react-query';
 import { ColorType, IChartApi, ISeriesApi, LineData, UTCTimestamp, createChart } from 'lightweight-charts';
 
 import { useIntraday } from '@/hooks/useIntraday';
-import { IntradayPoint } from '@/lib/api';
+import { IntradayPoint, fetchPriceAlerts } from '@/lib/api';
 import { normalizeSymbolToken } from '@/lib/modules';
 import { useTerminalStore } from '@/store/useTerminalStore';
 
@@ -117,6 +118,11 @@ export function IntradayPanel({ panelId, initialSymbol }: IntradayPanelProps) {
   const setCommandFeedback = useTerminalStore((state) => state.setCommandFeedback);
 
   const { data, isLoading, isError, error, streamStatus } = useIntraday(activeSymbol);
+  const alertsQuery = useQuery({
+    queryKey: ['alerts', activeSymbol, 'active'],
+    queryFn: () => fetchPriceAlerts({ symbol: activeSymbol, status: 'active' }),
+    refetchInterval: 2000
+  });
 
   useEffect(() => {
     const normalized = normalizeSymbolToken(initialSymbol) || 'AAPL';
@@ -139,6 +145,8 @@ export function IntradayPanel({ panelId, initialSymbol }: IntradayPanelProps) {
   };
 
   const points = useMemo(() => data?.points ?? [], [data?.points]);
+  const symbolAlerts = alertsQuery.data?.items ?? [];
+  const triggeredAlerts = symbolAlerts.filter((alert) => alert.triggerState === 'triggered');
   const lastTick = points.length > 0 ? points[points.length - 1] : undefined;
 
   const latestRows = useMemo(() => {
@@ -167,6 +175,15 @@ export function IntradayPanel({ panelId, initialSymbol }: IntradayPanelProps) {
 
         <div className="ml-auto flex items-center gap-2 text-[10px] uppercase tracking-wide">
           <span className="text-terminal-muted">{data ? `As of ${new Date(data.asOf).toLocaleTimeString()}` : 'Waiting...'}</span>
+          {triggeredAlerts.length > 0 ? (
+            <span className="rounded-sm border border-[#8f7c2d] bg-[#2a2410] px-1 py-0.5 text-[#ffdf7a]">
+              Alert Triggered ({triggeredAlerts.length})
+            </span>
+          ) : symbolAlerts.length > 0 ? (
+            <span className="rounded-sm border border-[#3f6e4f] bg-[#112419] px-1 py-0.5 text-[#8de8b2]">
+              Alerts Armed ({symbolAlerts.length})
+            </span>
+          ) : null}
           <span
             className={clsx(
               'rounded-sm border px-1 py-0.5',
@@ -181,6 +198,12 @@ export function IntradayPanel({ panelId, initialSymbol }: IntradayPanelProps) {
           </span>
         </div>
       </form>
+
+      {triggeredAlerts.length > 0 && (
+        <div className="mx-2 mt-2 border border-[#8f7c2d] bg-[#2a2410] px-2 py-1 text-[11px] text-[#ffdf7a]">
+          Triggered alerts: {triggeredAlerts.map((alert) => `#${alert.id} ${alert.condition} ${formatNumber(alert.threshold)}`).join(' | ')}
+        </div>
+      )}
 
       {isLoading && <div className="p-3 text-sm text-terminal-muted">Loading intraday feed...</div>}
 

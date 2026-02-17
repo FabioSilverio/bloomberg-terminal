@@ -41,7 +41,7 @@ export function StatusBar({ feedback }: StatusBarProps) {
       <div className="max-w-[58%] truncate text-[#aab6c7]">{feedback}</div>
       <div className="flex items-center gap-3">
         <span className="text-[10px] uppercase text-[#8ea0b8]">{densityMode.toUpperCase()}</span>
-        <span className="text-[10px] text-[#6f819c]">⇦⇨ cycle · ⌃⇧X close · ⌃⇧D density</span>
+        <span className="text-[10px] text-[#6f819c]">⇦⇨ cycle · ⌃⇧X close · ⌃⇧D density · ⌃⇧A alerts</span>
         {clocks.map((clock) => (
           <span key={clock.label} className="font-semibold text-[#d3dfef]">
             {clock.label} <span className="text-terminal-accent">{clock.value}</span>

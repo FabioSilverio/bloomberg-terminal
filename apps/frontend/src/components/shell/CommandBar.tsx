@@ -3,7 +3,7 @@
 import { FormEvent, KeyboardEvent, RefObject, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
-import { addWatchlistSymbol, removeWatchlistSymbol } from '@/lib/api';
+import { addWatchlistSymbol, createPriceAlert, removePriceAlert, removeWatchlistSymbol } from '@/lib/api';
 import { CommandContext, ModuleCode, parseCommand } from '@/lib/modules';
 
 interface CommandBarProps {
@@ -95,6 +95,47 @@ export function CommandBar({ inputRef, onOpenModule, onSetMmapRefresh, onFeedbac
       return;
     }
 
+    if (command.type === 'alert-add') {
+      setBusy(true);
+      try {
+        await createPriceAlert({
+          symbol: command.symbol,
+          condition: command.condition,
+          threshold: command.threshold,
+          enabled: true,
+          source: 'command'
+        });
+        await queryClient.invalidateQueries({ queryKey: ['alerts'] });
+        await queryClient.invalidateQueries({ queryKey: ['watchlist'] });
+        onOpenModule('ALRT', { symbol: command.symbol });
+        onFeedback(`Alert added: ${command.symbol} ${command.condition} ${command.threshold}`);
+        pushHistory(value);
+        setValue(`ALRT ADD ${command.symbol} ${command.condition.toUpperCase()} ${command.threshold}`);
+      } catch (error) {
+        onFeedback(error instanceof Error ? error.message : 'Failed to add alert');
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
+    if (command.type === 'alert-remove') {
+      setBusy(true);
+      try {
+        await removePriceAlert(command.alertId);
+        await queryClient.invalidateQueries({ queryKey: ['alerts'] });
+        await queryClient.invalidateQueries({ queryKey: ['watchlist'] });
+        onFeedback(`Alert #${command.alertId} removed`);
+        pushHistory(value);
+        setValue(`ALRT RM ${command.alertId}`);
+      } catch (error) {
+        onFeedback(error instanceof Error ? error.message : 'Failed to remove alert');
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     onFeedback(command.raw ? `Unknown function: ${command.raw}` : 'Enter a function code to continue');
   };
 
@@ -133,7 +174,7 @@ export function CommandBar({ inputRef, onOpenModule, onSetMmapRefresh, onFeedbac
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={onInputKeyDown}
         className="h-7 flex-1 border border-[#233044] bg-[#05080d] px-2 text-sm text-[#d7e2f0] outline-none ring-terminal-accent focus:ring-1"
-        placeholder="MMAP | INTRA AAPL | WL ADD EURUSD"
+        placeholder="MMAP | INTRA AAPL | WL ADD EURUSD | ALRT ADD AAPL ABOVE 200"
         spellCheck={false}
       />
       <div className="text-[11px] text-terminal-muted">
