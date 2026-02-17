@@ -31,10 +31,9 @@ function resolveIntradayWsEndpoint(symbol: string): string {
 
 export function useIntraday(symbol: string) {
   const queryClient = useQueryClient();
-  const queryKey = ['intraday', symbol] as const;
 
   const query = useQuery({
-    queryKey,
+    queryKey: ['intraday', symbol],
     queryFn: () => fetchIntraday(symbol),
     refetchInterval: Math.max(500, Number.isFinite(DEFAULT_REFRESH_MS) ? DEFAULT_REFRESH_MS : 2000)
   });
@@ -54,7 +53,7 @@ export function useIntraday(symbol: string) {
           if ('error' in payload) {
             return;
           }
-          queryClient.setQueryData(queryKey, payload);
+          queryClient.setQueryData(['intraday', symbol], payload);
         } catch {
           // Keep polling path active.
         }
@@ -64,7 +63,7 @@ export function useIntraday(symbol: string) {
     }
 
     return () => socket?.close();
-  }, [queryClient, queryKey, symbol]);
+  }, [queryClient, symbol]);
 
   return query;
 }
