@@ -6,11 +6,22 @@ export interface MarketPoint {
   changePercent: number;
   currency?: string;
   source?: string;
+  asOf?: string;
+}
+
+export interface MarketSectionMeta {
+  source?: string;
+  sources: string[];
+  asOf?: string;
+  loaded: number;
+  expected: number;
+  stale: boolean;
 }
 
 export interface MarketOverviewResponse {
   asOf: string;
   degraded: boolean;
+  banner?: string;
   warnings: string[];
   sections: {
     indices: MarketPoint[];
@@ -18,6 +29,13 @@ export interface MarketOverviewResponse {
     fx: MarketPoint[];
     commodities: MarketPoint[];
     crypto: MarketPoint[];
+  };
+  sectionMeta: {
+    indices: MarketSectionMeta;
+    rates: MarketSectionMeta;
+    fx: MarketSectionMeta;
+    commodities: MarketSectionMeta;
+    crypto: MarketSectionMeta;
   };
 }
 

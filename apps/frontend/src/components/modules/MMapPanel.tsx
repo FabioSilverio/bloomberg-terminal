@@ -2,7 +2,7 @@
 
 import clsx from 'clsx';
 import { useMarketOverview } from '@/hooks/useMarketOverview';
-import { MarketPoint } from '@/lib/api';
+import { MarketPoint, MarketSectionMeta } from '@/lib/api';
 
 const EXPECTED_COUNTS = {
   indices: 4,
@@ -27,11 +27,12 @@ function ChangeCell({ point }: { point: MarketPoint }) {
   );
 }
 
-function MarketTable({ title, rows }: { title: string; rows: MarketPoint[] }) {
+function MarketTable({ title, rows, meta }: { title: string; rows: MarketPoint[]; meta?: MarketSectionMeta }) {
   return (
     <section className="border border-terminal-line bg-[#0b1119]">
-      <header className="border-b border-terminal-line bg-[#101822] px-2 py-1 text-[11px] font-bold uppercase tracking-wider text-terminal-accent">
-        {title}
+      <header className="flex items-center justify-between border-b border-terminal-line bg-[#101822] px-2 py-1 text-[11px] font-bold uppercase tracking-wider text-terminal-accent">
+        <span>{title}</span>
+        {meta?.source && <span className="text-[10px] font-medium normal-case text-terminal-muted">{meta.source}</span>}
       </header>
       <div className="max-h-64 overflow-auto scrollbar-thin">
         <table className="w-full border-collapse text-xs">
@@ -93,26 +94,27 @@ export function MMapPanel() {
     data.sections.commodities.length +
     data.sections.crypto.length;
 
+  const bannerText = data.banner ??
+    (data.degraded ? `Degraded mode (${totalLoaded}/${totalExpected} instruments loaded).` : undefined);
+
   return (
     <div className="flex h-full flex-col bg-terminal-panel">
       <div className="flex items-center justify-between border-b border-terminal-line px-3 py-2 text-[11px]">
         <div className="uppercase tracking-wider text-terminal-muted">As of {new Date(data.asOf).toLocaleTimeString()}</div>
         <div className={clsx('font-semibold', data.degraded ? 'text-terminal-down' : 'text-terminal-up')}>
-          {data.degraded ? 'DEGRADED MODE - FALLBACK PROVIDERS ACTIVE' : 'LIVE'}
+          {data.degraded ? 'DEGRADED' : 'LIVE'}
         </div>
       </div>
 
-      {data.degraded && (
+      {bannerText && (
         <div className="border-b border-terminal-line bg-[#21150f] px-3 py-2 text-[11px] text-[#ffbc7d]">
-          <div className="font-semibold">MMAP is running with partial/fallback data ({totalLoaded}/{totalExpected} instruments loaded).</div>
-          <div className="mt-1 text-[#ffd5a8]">
-            Check backend provider diagnostics at <span className="font-mono">/api/v1/health/providers</span> for last errors.
-          </div>
+          <div className="font-semibold">{bannerText}</div>
+          <div className="mt-1 text-[#ffd5a8]">{totalLoaded}/{totalExpected} instruments loaded.</div>
         </div>
       )}
 
       {data.warnings.length > 0 && (
-        <div className="border-b border-terminal-line bg-[#21150f] px-3 py-1 text-[11px] text-[#ffbc7d]">
+        <div className="border-b border-terminal-line bg-[#1d1310] px-3 py-1 text-[11px] text-[#ffc48a]">
           <ul className="list-disc space-y-0.5 pl-4">
             {data.warnings.map((warning) => (
               <li key={warning}>{warning}</li>
@@ -122,12 +124,12 @@ export function MMapPanel() {
       )}
 
       <div className="grid flex-1 grid-cols-1 gap-2 overflow-auto p-2 scrollbar-thin lg:grid-cols-2">
-        <MarketTable title="Indices" rows={data.sections.indices} />
-        <MarketTable title="Rates" rows={data.sections.rates} />
-        <MarketTable title="FX" rows={data.sections.fx} />
-        <MarketTable title="Commodities" rows={data.sections.commodities} />
+        <MarketTable title="Indices" rows={data.sections.indices} meta={data.sectionMeta?.indices} />
+        <MarketTable title="Rates" rows={data.sections.rates} meta={data.sectionMeta?.rates} />
+        <MarketTable title="FX" rows={data.sections.fx} meta={data.sectionMeta?.fx} />
+        <MarketTable title="Commodities" rows={data.sections.commodities} meta={data.sectionMeta?.commodities} />
         <div className="lg:col-span-2">
-          <MarketTable title="Crypto" rows={data.sections.crypto} />
+          <MarketTable title="Crypto" rows={data.sections.crypto} meta={data.sectionMeta?.crypto} />
         </div>
       </div>
     </div>
